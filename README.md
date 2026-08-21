@@ -60,7 +60,6 @@ marketplace-service ──private─►  (public domain)             (public dom
 | `paykit-server` | `paykit-server/Dockerfile` | `[::]:3001` | public HTTPS domain (setup UI) + private |
 | `bitcoind` | `bitcoind/Dockerfile` | `[::]:18443` RPC | private only |
 | `fulcrum` | `fulcrum/Dockerfile` | `[::]:50001` TCP | private + public TCP proxy (Bitkit) |
-| `miner` | `miner/Dockerfile` | - | none (RPC client loop) |
 | `locks-postgres` | Railway managed Postgres | 5432 | private only |
 | `paykit-postgres` | Railway managed Postgres | 5432 | private only |
 
@@ -73,13 +72,13 @@ IPv6 wildcard.
 ### bitcoind
 - `BITCOIND_RPC_USER`, `BITCOIND_RPC_PASS` - regtest RPC credentials (random,
   never leave the project).
+- `MINE_INTERVAL_SECONDS` (default 45) - the entrypoint also runs the block
+  generation loop: it bootstraps the chain to 101 blocks on first run (coin
+  maturity) and then mines one block per interval to a node-held miner wallet
+  so payments confirm without babysitting. The loop lives in this container
+  (not a sidecar) because the image's bitcoin-cli cannot open IPv6 client
+  connections, and Railway private networking is IPv6-only.
 - Volume mounted at `/data`.
-
-### miner
-- `BITCOIND_RPC_HOST` = `bitcoind.railway.internal`
-- `BITCOIND_RPC_USER`, `BITCOIND_RPC_PASS`
-- `MINE_INTERVAL_SECONDS` (default 45) - one block per interval; bootstraps
-  the chain to 101 blocks on first run so coinbase coins mature.
 
 ### fulcrum
 - `BITCOIND_RPC_HOST`, `BITCOIND_RPC_USER`, `BITCOIND_RPC_PASS`
@@ -142,7 +141,6 @@ railway up --service locks-server --path-as-root locks-server --detach
 railway up --service paykit-server --path-as-root paykit-server --detach
 railway up --service bitcoind --path-as-root bitcoind --detach
 railway up --service fulcrum --path-as-root fulcrum --detach
-railway up --service miner --path-as-root miner --detach
 ```
 
 Rebuilding is deterministic: sources are cloned at the pinned revisions during
