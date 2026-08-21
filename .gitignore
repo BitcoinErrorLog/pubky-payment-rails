@@ -1,0 +1,4 @@
+verify/reader-state-ctrl/
+*.env
+.DS_Store
+._*
