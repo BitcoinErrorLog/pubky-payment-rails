@@ -1,0 +1,139 @@
+diff --git a/paykit-server/src/application/create_invoice.rs b/paykit-server/src/application/create_invoice.rs
+index 9a43a5d..2111ed7 100644
+--- a/paykit-server/src/application/create_invoice.rs
++++ b/paykit-server/src/application/create_invoice.rs
+@@ -153,8 +153,32 @@ pub trait IntentBuilder: Send + Sync {
+     ) -> Result<Vec<(PaymentEndpointIdentifier, PaymentEndpointPayload)>, CreateInvoiceError>;
+ }
+ 
+-#[derive(Default)]
+-pub struct PaykitIntentBuilder;
++pub struct PaykitIntentBuilder {
++    onchain_endpoint_identifier: &'static str,
++}
++impl PaykitIntentBuilder {
++    /// Real wallets (Bitkit) reject payment endpoint identifiers whose network
++    /// component does not match their configured chain, so non-mainnet
++    /// deployments must not advertise `btc-bitcoin-p2wpkh`.
++    pub fn for_network(network: &crate::config::BitcoinNetwork) -> Self {
++        let onchain_endpoint_identifier = match network {
++            crate::config::BitcoinNetwork::Mainnet => "btc-bitcoin-p2wpkh",
++            crate::config::BitcoinNetwork::Testnet => "btc-testnet-p2wpkh",
++            crate::config::BitcoinNetwork::Signet => "btc-signet-p2wpkh",
++            crate::config::BitcoinNetwork::Regtest => "btc-regtest-p2wpkh",
++        };
++        Self {
++            onchain_endpoint_identifier,
++        }
++    }
++}
++impl Default for PaykitIntentBuilder {
++    fn default() -> Self {
++        Self {
++            onchain_endpoint_identifier: "btc-bitcoin-p2wpkh",
++        }
++    }
++}
+ impl IntentBuilder for PaykitIntentBuilder {
+     fn payment_request_terms(
+         &self,
+@@ -184,7 +208,7 @@ impl IntentBuilder for PaykitIntentBuilder {
+             proposal_expires_at: None,
+             recurrence: None,
+             accepted_payment_endpoint_identifiers: vec![
+-                PaymentEndpointIdentifier::new("btc-bitcoin-p2wpkh")
++                PaymentEndpointIdentifier::new(self.onchain_endpoint_identifier)
+                     .map_err(|_| CreateInvoiceError::InvalidRequest)?,
+             ],
+             metadata,
+@@ -198,7 +222,7 @@ impl IntentBuilder for PaykitIntentBuilder {
+         if address.is_empty() {
+             return Err(CreateInvoiceError::InvalidRequest);
+         }
+-        let identifier = PaymentEndpointIdentifier::new("btc-bitcoin-p2wpkh")
++        let identifier = PaymentEndpointIdentifier::new(self.onchain_endpoint_identifier)
+             .map_err(|_| CreateInvoiceError::InvalidRequest)?;
+         Ok(vec![(identifier, PaymentEndpointPayload::new(address))])
+     }
+diff --git a/paykit-server/src/server.rs b/paykit-server/src/server.rs
+index e016fca..3e44447 100644
+--- a/paykit-server/src/server.rs
++++ b/paykit-server/src/server.rs
+@@ -185,7 +185,9 @@ impl Server {
+             Arc::new(creators.clone()),
+             config.deployment_invariants().bitcoin_network.clone(),
+             Arc::new(invoices.clone()),
+-            Arc::new(PaykitIntentBuilder),
++            Arc::new(PaykitIntentBuilder::for_network(
++                &config.deployment_invariants().bitcoin_network,
++            )),
+         ));
+         let status_service = Arc::new(PaymentStatusService::new(Arc::new(invoices.clone())));
+         let signed_auth = Arc::new(SignedLocksAuth::from_config(&config));
+diff --git a/paykit-server/tests/create_invoice.rs b/paykit-server/tests/create_invoice.rs
+index c61e65e..a346a81 100644
+--- a/paykit-server/tests/create_invoice.rs
++++ b/paykit-server/tests/create_invoice.rs
+@@ -100,7 +100,7 @@ fn capable_marker() -> paykit_lib::PaykitReceiverMarker {
+ #[test]
+ fn library_payment_request_has_exact_terms_amount_and_metadata() {
+     let request = request();
+-    let terms = PaykitIntentBuilder
++    let terms = PaykitIntentBuilder::default()
+         .payment_request_terms(&request, &valid_lock())
+         .unwrap();
+     assert_eq!(terms.amount.value, "0.00050000");
+@@ -140,7 +140,7 @@ fn private_payment_list_uses_derived_bech32_p2wpkh_address() {
+     let xpub = Xpub::from_priv(&secp, &account).to_string();
+     let address = derive_bip84_p2wpkh_address(&xpub, 0, &BitcoinNetwork::Mainnet, 0)
+         .expect("valid account xpub derives an address");
+-    let details = PaykitIntentBuilder
++    let details = PaykitIntentBuilder::default()
+         .receiving_details(&address)
+         .expect("canonical library types accept endpoint");
+     assert_eq!(details[0].0.as_str(), "btc-bitcoin-p2wpkh");
+@@ -299,7 +299,7 @@ fn service(
+         Arc::new(FakeCredentials),
+         BitcoinNetwork::Mainnet,
+         store,
+-        Arc::new(PaykitIntentBuilder),
++        Arc::new(PaykitIntentBuilder::default()),
+     )
+ }
+ 
+@@ -439,7 +439,7 @@ async fn fifteen_second_deadline_is_safe_and_does_not_commit() {
+         Arc::new(FakeCredentials),
+         BitcoinNetwork::Mainnet,
+         store.clone(),
+-        Arc::new(PaykitIntentBuilder),
++        Arc::new(PaykitIntentBuilder::default()),
+         Arc::new(FixedClock::new([start, start + Duration::from_secs(15)])),
+     );
+ 
+@@ -477,7 +477,7 @@ async fn marker_discovery_cannot_start_after_the_whole_request_deadline() {
+         Arc::new(FakeCredentials),
+         BitcoinNetwork::Mainnet,
+         store.clone(),
+-        Arc::new(PaykitIntentBuilder),
++        Arc::new(PaykitIntentBuilder::default()),
+         Arc::new(FixedClock::new([
+             start,
+             start,
+@@ -521,7 +521,7 @@ async fn signed_router_maps_deadline_exhaustion_to_dependency_timeout() {
+         Arc::new(FakeCredentials),
+         BitcoinNetwork::Mainnet,
+         store,
+-        Arc::new(PaykitIntentBuilder),
++        Arc::new(PaykitIntentBuilder::default()),
+         Arc::new(FixedClock::new([start, start + Duration::from_secs(15)])),
+     );
+     let router = invoices_router(Arc::new(service)).layer(Extension(signed_auth(&key)));
+@@ -793,7 +793,7 @@ async fn new_invoice_discovers_marker_before_atomic_persistence_and_pins_it_in_b
+         Arc::new(FakeCredentials),
+         BitcoinNetwork::Mainnet,
+         store.clone(),
+-        Arc::new(PaykitIntentBuilder),
++        Arc::new(PaykitIntentBuilder::default()),
+     );
+ 
+     service.create(request()).await.unwrap();
