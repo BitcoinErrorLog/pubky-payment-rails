@@ -8,16 +8,18 @@ set -eu
 : "${BITCOIND_RPC_HOST:?BITCOIND_RPC_HOST is required}"
 : "${BITCOIND_RPC_USER:?BITCOIND_RPC_USER is required}"
 : "${BITCOIND_RPC_PASS:?BITCOIND_RPC_PASS is required}"
-TCP_BIND="${FULCRUM_TCP_BIND:-:::50001}"
-
 mkdir -p /data
 
+# Two listeners: Qt treats "::" as IPv6-only, so the IPv4 wildcard is bound
+# separately - Railway's public TCP proxy connects over IPv4 private
+# networking while paykit-server connects over IPv6 (fulcrum.railway.internal).
 cat > /tmp/fulcrum.conf <<EOF
 datadir = /data
 bitcoind = ${BITCOIND_RPC_HOST}:18443
 rpcuser = ${BITCOIND_RPC_USER}
 rpcpassword = ${BITCOIND_RPC_PASS}
-tcp = ${TCP_BIND}
+tcp = 0.0.0.0:50001
+tcp = :::50001
 peering = false
 announce = false
 EOF
