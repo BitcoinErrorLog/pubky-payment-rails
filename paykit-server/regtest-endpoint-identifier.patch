@@ -1,7 +1,18 @@
 diff --git a/paykit-server/src/application/create_invoice.rs b/paykit-server/src/application/create_invoice.rs
-index 9a43a5d..2111ed7 100644
+index 9a43a5d..508aa04 100644
 --- a/paykit-server/src/application/create_invoice.rs
 +++ b/paykit-server/src/application/create_invoice.rs
+@@ -8,9 +8,9 @@ use std::{
+ 
+ use async_trait::async_trait;
+ use bitcoin::{
+-    Address, NetworkKind,
+     bip32::{ChildNumber, Xpub},
+     secp256k1::Secp256k1,
++    Address, NetworkKind,
+ };
+ use locks_core::{
+     ids::CreatorPubky as RawCreatorPubky,
 @@ -153,8 +153,32 @@ pub trait IntentBuilder: Send + Sync {
      ) -> Result<Vec<(PaymentEndpointIdentifier, PaymentEndpointPayload)>, CreateInvoiceError>;
  }
@@ -37,16 +48,35 @@ index 9a43a5d..2111ed7 100644
  impl IntentBuilder for PaykitIntentBuilder {
      fn payment_request_terms(
          &self,
-@@ -184,7 +208,7 @@ impl IntentBuilder for PaykitIntentBuilder {
+@@ -174,19 +198,22 @@ impl IntentBuilder for PaykitIntentBuilder {
+         );
+         metadata.insert("reader".into(), Value::String(request.reader.to_string()));
+         Ok(PaymentRequestTerms {
++            // Paykit payment-requests spec: amount.asset is case-sensitive and
++            // SHOULD use the same lowercase asset string as the endpoint
++            // identifier asset segment; wallets (Bitkit) enforce "btc".
+             amount: PaymentAmount::new(
+                 format!("{}.{:08}", sats / 100_000_000, sats % 100_000_000),
+-                "BTC",
++                "btc",
+             )
+             .map_err(|_| CreateInvoiceError::InvalidRequest)?,
+             payment_reference: PaymentReference::new(uuid::Uuid::new_v4().hyphenated().to_string())
+                 .map_err(|_| CreateInvoiceError::InvalidRequest)?,
              proposal_expires_at: None,
              recurrence: None,
-             accepted_payment_endpoint_identifiers: vec![
+-            accepted_payment_endpoint_identifiers: vec![
 -                PaymentEndpointIdentifier::new("btc-bitcoin-p2wpkh")
-+                PaymentEndpointIdentifier::new(self.onchain_endpoint_identifier)
-                     .map_err(|_| CreateInvoiceError::InvalidRequest)?,
-             ],
+-                    .map_err(|_| CreateInvoiceError::InvalidRequest)?,
+-            ],
++            accepted_payment_endpoint_identifiers: vec![PaymentEndpointIdentifier::new(
++                self.onchain_endpoint_identifier,
++            )
++            .map_err(|_| CreateInvoiceError::InvalidRequest)?],
              metadata,
-@@ -198,7 +222,7 @@ impl IntentBuilder for PaykitIntentBuilder {
+         })
+     }
+@@ -198,7 +225,7 @@ impl IntentBuilder for PaykitIntentBuilder {
          if address.is_empty() {
              return Err(CreateInvoiceError::InvalidRequest);
          }
@@ -71,10 +101,10 @@ index e016fca..3e44447 100644
          let status_service = Arc::new(PaymentStatusService::new(Arc::new(invoices.clone())));
          let signed_auth = Arc::new(SignedLocksAuth::from_config(&config));
 diff --git a/paykit-server/tests/create_invoice.rs b/paykit-server/tests/create_invoice.rs
-index c61e65e..a346a81 100644
+index c61e65e..dbfc856 100644
 --- a/paykit-server/tests/create_invoice.rs
 +++ b/paykit-server/tests/create_invoice.rs
-@@ -100,7 +100,7 @@ fn capable_marker() -> paykit_lib::PaykitReceiverMarker {
+@@ -100,11 +100,11 @@ fn capable_marker() -> paykit_lib::PaykitReceiverMarker {
  #[test]
  fn library_payment_request_has_exact_terms_amount_and_metadata() {
      let request = request();
@@ -83,6 +113,11 @@ index c61e65e..a346a81 100644
          .payment_request_terms(&request, &valid_lock())
          .unwrap();
      assert_eq!(terms.amount.value, "0.00050000");
+-    assert_eq!(terms.amount.asset, "BTC");
++    assert_eq!(terms.amount.asset, "btc");
+     assert_eq!(terms.proposal_expires_at, None);
+     assert_eq!(terms.recurrence, None);
+     assert_eq!(
 @@ -140,7 +140,7 @@ fn private_payment_list_uses_derived_bech32_p2wpkh_address() {
      let xpub = Xpub::from_priv(&secp, &account).to_string();
      let address = derive_bip84_p2wpkh_address(&xpub, 0, &BitcoinNetwork::Mainnet, 0)

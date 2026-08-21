@@ -41,13 +41,16 @@ RUN set -eu; \
 WORKDIR /build/paykit-server
 
 # Fail-closed patch: invoice intents must advertise the network-correct BIP84
-# P2WPKH endpoint identifier (btc-regtest-p2wpkh on regtest). The pinned
-# upstream rev hardcodes btc-bitcoin-p2wpkh, which real wallets (Bitkit)
-# reject on non-mainnet chains; the demo reader masked this because it does
-# not enforce network correctness. `git apply` aborts the build on any drift.
+# P2WPKH endpoint identifier (btc-regtest-p2wpkh on regtest) and the
+# spec-lowercase amount asset ("btc"). The pinned upstream rev hardcodes
+# btc-bitcoin-p2wpkh and "BTC", which real wallets (Bitkit) reject: the
+# identifier on non-mainnet chains, and the asset because the Payment
+# Requests spec makes amount.asset case-sensitive lowercase. The demo reader
+# masked both. `git apply` aborts the build on any drift.
 COPY regtest-endpoint-identifier.patch /build/regtest-endpoint-identifier.patch
 RUN git apply --verbose /build/regtest-endpoint-identifier.patch && \
-    grep -q 'btc-regtest-p2wpkh' paykit-server/src/application/create_invoice.rs
+    grep -q 'btc-regtest-p2wpkh' paykit-server/src/application/create_invoice.rs && \
+    grep -q '"btc",' paykit-server/src/application/create_invoice.rs
 
 # Fail-closed: rewrites the git dependency pins to the local paths above and
 # aborts if the supplied trees drift from the committed manifest pins.
