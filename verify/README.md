@@ -7,7 +7,19 @@ the deployment notes for how it was used. It depends on `@synonymdev/pubky`
 
 Subcommands: gen, signup, identities, connect, setup-start, setup-claim,
 setup-poll, reader-marker, publish, negative, proof, status, lifecycle,
-credential.
+credential, checkout.
+
+## Fiat locks (fiat-verifier gateway)
+
+`publish` takes `ASSET`/`AMOUNT` env overrides: `ASSET=USD AMOUNT=1999` authors
+a `{amount: "1999", asset: "USD"}` criterion (19.99 USD in minor units), which
+the deployed Lock Server accepts unchanged and the fiat-verifier gateway
+settles through Stripe test mode. `GUARDED_PATH` picks the guarded upload path
+(default `content/premium.txt`). After `proof`, `checkout <bundleId>` fetches
+the hosted Stripe Checkout URL from the gateway (`FIAT_URL` env, default the
+deployed staging gateway); `status` can be pointed at the gateway with
+`PAYKIT_URL=https://fiat-verifier-production.up.railway.app` — BTC bundles are
+answered by verbatim proxy to paykit-server, fiat bundles from gateway state.
 
 ## Staging-homeserver identities
 

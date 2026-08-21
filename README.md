@@ -44,24 +44,36 @@ drift from the dependency pins committed in paykit-server's manifests.
 ## Topology (Railway project `pubky-marketplace-staging`)
 
 ```text
-pubky-app (Vercel)  ──HTTPS──►  locks-server  ──private──►  paykit-server
-marketplace-service ──private─►  (public domain)             (public domain: /setup only surface used)
-                                     │                            │
-                                     ▼ signed HTTP                ▼ electrum
-                              paykit-server ◄──trusted key   fulcrum ──► bitcoind ◄── miner
-                                     │                        (public TCP proxy        (private, RPC)
-                              locks-postgres                   for Bitkit)
-                              paykit-postgres
+pubky-app (Vercel)  ──HTTPS──►  locks-server  ──private──►  fiat-verifier (gateway)
+marketplace-service ──private─►  (public domain)             │        │
+                                     │                signed │  BTC   │ USD
+                                     │              verbatim ▼        ▼
+                                     │               paykit-server   Stripe (TEST mode,
+                                     │              (public domain:   public webhook domain)
+                                     │               /setup surface)
+                                     │                     ▼ electrum
+                              locks-postgres          fulcrum ──► bitcoind ◄── miner
+                              paykit-postgres        (public TCP proxy    (private, RPC)
+                              fiat-postgres           for Bitkit)
 ```
+
+Since the fiat-rails Phase 1 cutover (2026-08-21) the Lock Server's single
+`[paykit] server_url` names the `fiat-verifier` gateway
+([`BitcoinErrorLog/pubky-fiat-verifier`](https://github.com/BitcoinErrorLog/pubky-fiat-verifier)),
+which forwards BTC criteria to paykit-server verbatim (original body +
+signature) and settles `USD` criteria through Stripe test mode. The
+post-cutover BTC live purchase was re-proven with this driver the same day.
 
 | Railway service | Built from | Listens | Exposure |
 | --- | --- | --- | --- |
 | `locks-server` | `locks-server/Dockerfile` | `[::]:3000` | public HTTPS domain + private |
+| `fiat-verifier` | `pubky-fiat-verifier` repo Dockerfile | `[::]:3002` | public HTTPS domain (Stripe webhooks + buyer checkout-sessions) + private |
 | `paykit-server` | `paykit-server/Dockerfile` | `[::]:3001` | public HTTPS domain (setup UI) + private |
 | `bitcoind` | `bitcoind/Dockerfile` | `[::]:18443` RPC | private only |
 | `fulcrum` | `fulcrum/Dockerfile` | `[::]:50001` TCP | private + public TCP proxy (Bitkit) |
 | `locks-postgres` | Railway managed Postgres | 5432 | private only |
 | `paykit-postgres` | Railway managed Postgres | 5432 | private only |
+| fiat Postgres (`Postgres-sa-c`) | Railway managed Postgres | 5432 | private only |
 
 Inter-service links use Railway private networking
 (`<service>.railway.internal`, IPv6), which is why every listener binds the
@@ -96,7 +108,13 @@ IPv6 wildcard.
   encrypting creator authority at rest.
 - `LOCKS_ALLOWED_RETURN_ORIGINS` - comma-separated origins allowed to receive
   `/connect` callback codes (the Vercel app origin).
-- `LOCKS_PAYKIT_SERVER_URL` (default `http://paykit-server.railway.internal:3001`)
+- `LOCKS_PAYKIT_SERVER_URL` (default `http://paykit-server.railway.internal:3001`) -
+  **currently set to `http://fiat-verifier.railway.internal:3002`**: since the
+  fiat-rails Phase 1 cutover (2026-08-21) the Lock Server's payment backend is
+  the `fiat-verifier` gateway (`BitcoinErrorLog/pubky-fiat-verifier`, deployed
+  in this same Railway project), which proxies BTC criteria verbatim to
+  paykit-server and settles `USD` criteria through Stripe test mode. Rollback
+  is setting this back to the paykit-server URL and redeploying.
 - `LOCKS_PAYKIT_MIN_CONFIRMATIONS` (default 1)
 - `LOCKS_PKDNS_PUBLIC_IP` - advisory A-record IP for the PKARR packet; HTTP
   clients use the ICANN domain record.
