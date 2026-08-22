@@ -10,7 +10,9 @@ FROM rust:1.91.1-slim-bookworm@sha256:8514999d4786ef12efe89239e86b3d0a021b94b9d3
 
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 
-ARG PAYKIT_SERVER_REV=f38c7915e6b9b104e040773e78438f8aa984c46c
+ARG PAYKIT_SERVER_REPO=https://github.com/BitcoinErrorLog/paykit-server.git
+ARG PAYKIT_SERVER_BRANCH=marketplace-rails
+ARG PAYKIT_SERVER_REV=98f7c2251e5eabf1d7b14704dcdababf25499c53
 ARG PAYKIT_RS_REV=52a852995bfc457b78d32f5a45f6741766a89bba
 ARG LOCKS_DEP_REV=df5ea1b6d8dcdec3a9b5a915c3f57bca69d75c8a
 
@@ -31,7 +33,7 @@ RUN set -eu; \
     cp -a /tmp/locks/locks-core /tmp/locks/locks-service /tmp/locks/locks-server \
         /tmp/locks/locks-sdk /tmp/locks/locks-e2e /build/locks/; \
     rm -rf /tmp/locks; \
-    git clone https://github.com/pubky/paykit-server.git /build/paykit-server; \
+    git clone --branch "$PAYKIT_SERVER_BRANCH" "$PAYKIT_SERVER_REPO" /build/paykit-server; \
     git -C /build/paykit-server checkout --detach "$PAYKIT_SERVER_REV"; \
     test "$(git -C /build/paykit-server rev-parse HEAD)" = "$PAYKIT_SERVER_REV"
 
