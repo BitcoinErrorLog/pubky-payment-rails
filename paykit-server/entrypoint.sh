@@ -23,6 +23,23 @@ set -eu
 electrum_endpoint="${PAYKIT_ELECTRUM_ENDPOINT:-tcp://fulcrum.railway.internal:50001}"
 listen_addr="${PAYKIT_LISTEN_ADDR:-[::]:3001}"
 
+# Optional marketplace transaction-service trust anchor: when set, requests
+# signed by this key are accepted on the signed business routes (payment
+# requests, status lookups) exactly like Lock Server signatures.
+marketplace_section=""
+if [ -n "${MARKETPLACE_TRUSTED_PUBLIC_KEY:-}" ]; then
+  marketplace_section="[marketplace]
+trusted_public_key = \"$MARKETPLACE_TRUSTED_PUBLIC_KEY\"
+"
+fi
+
+# Optional HTTP relay inbox override for the manual claim session loopback;
+# the default is the public https://httprelay.pubky.app/inbox.
+auth_relay_line=""
+if [ -n "${PAYKIT_AUTH_RELAY:-}" ]; then
+  auth_relay_line="auth_relay = \"$PAYKIT_AUTH_RELAY\""
+fi
+
 origins_toml="$(printf '%s' "$PAYKIT_SETUP_ALLOWED_ORIGINS" | awk -F',' '{
   out = "";
   for (i = 1; i <= NF; i++) {
@@ -42,6 +59,7 @@ listen_addr = "$listen_addr"
 [locks]
 trusted_public_key = "$PAYKIT_TRUSTED_LOCKS_PUBLIC_KEY"
 
+$marketplace_section
 [setup]
 allowed_origins = [$origins_toml]
 
@@ -49,6 +67,7 @@ allowed_origins = [$origins_toml]
 receiver_path = "bitkit/server"
 receiver_path_priority = ["bitkit"]
 network = "mainnet"
+$auth_relay_line
 
 [bitcoin]
 network = "regtest"

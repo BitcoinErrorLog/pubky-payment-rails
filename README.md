@@ -126,8 +126,37 @@ IPv6 wildcard.
 - `PAYKIT_DATABASE_URL` - references `paykit-postgres`.
 - `PAYKIT_MASTER_KEY` - base64url-no-pad 32B master key.
 - `PAYKIT_SETUP_ALLOWED_ORIGINS` - comma-separated origins for the hosted
-  `/setup` page (the Vercel app origin).
+  `/setup` page AND the CORS allow-list of the browser-called manual claim
+  route `POST /v0/accounts/claim` (the Vercel app origin).
 - `PAYKIT_ELECTRUM_ENDPOINT` (default `tcp://fulcrum.railway.internal:50001`)
+- `MARKETPLACE_TRUSTED_PUBLIC_KEY` (optional) - `pubky<z-base32>` public key
+  of the marketplace transaction service's request-signing keypair. When set,
+  `x-paykit-signature` request signatures by this key are accepted on the
+  signed business routes (`/v0/payment-requests`, `/transactions/status`,
+  `/invoices`) exactly like Lock Server signatures. The transaction service
+  holds the matching ed25519 seed (`PAYKIT_REQUEST_SIGNING_KEY`).
+- `PAYKIT_AUTH_RELAY` (optional, default `https://httprelay.pubky.app/inbox`) -
+  HTTP relay inbox base used by the manual claim session loopback.
+
+The paykit-server image builds from the `BitcoinErrorLog/paykit-server` fork
+(`marketplace-rails` branch), which adds on top of upstream `f38c7915`:
+- `POST /v0/accounts/claim` - manual watch-only account registration for
+  browser sellers. Body `{auth_token, account_xpub, account_index}`, where
+  `auth_token` is the unpadded-base64url serialized Pubky AuthToken whose
+  capabilities exactly match the companion setup capabilities
+  (`/pub/paykit/v0/bitkit/server/:rw,/pub/paykit/v0/private/bitkit/server/:rw`).
+  The server exchanges the token for a homeserver session through the HTTP
+  relay, publishes the receiver marker, and persists the same encrypted
+  creator record the Bitkit companion flow writes. Re-claims with the same
+  `(xpub, account_index)` refresh the session; a different account is refused
+  with `409 account_mismatch` (upstream reauthentication semantics).
+- `GET /v0/accounts/{creator}` - public `{claimed: bool}` existence lookup
+  used by the marketplace to report per-seller Bitcoin availability.
+- `POST /v0/payment-requests` - signed (marketplace key) lock-free payment
+  request creation for physical orders. Body
+  `{creator, reader, reference, amount_sats}` (canonical JSON, signed like
+  `/invoices`); `reference` is a 26-char Crockford base32 identifier the
+  marketplace also uses as `bundle_id` in `/transactions/status` polls.
 
 ## Secrets handling
 

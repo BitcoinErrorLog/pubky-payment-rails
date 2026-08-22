@@ -1,6 +1,14 @@
-# Paykit Server built from the pinned upstream revisions verified end to end
-# in the local payments-env stack:
-#   pubky/paykit-server @ f38c7915  (runtime)
+# Paykit Server built from the BitcoinErrorLog fork (marketplace-rails branch),
+# which is upstream pubky/paykit-server @ f38c7915 plus:
+#   - the former regtest-endpoint-identifier.patch folded into the tree
+#     (network-correct endpoint identifiers, lowercase "btc" asset, JSON
+#     {"value": address} endpoint payloads),
+#   - POST /v0/accounts/claim + GET /v0/accounts/{creator} (manual watch-only
+#     claims authenticated by capability-scoped Pubky AuthTokens),
+#   - POST /v0/payment-requests (marketplace-signed lock-free payment
+#     requests) and multi-key signed-request auth.
+# Dependency pins are unchanged:
+#   BitcoinErrorLog/paykit-server @ PAYKIT_SERVER_REV (runtime)
 #   pubky/paykit-rs     @ 52a85299  (the exact rev pinned in paykit-server's manifests)
 #   pubky/locks         @ df5ea1b6  (the exact locks-core rev pinned in paykit-server's manifests)
 #
@@ -12,7 +20,8 @@ FROM rust:1.91.1-slim-bookworm@sha256:8514999d4786ef12efe89239e86b3d0a021b94b9d3
 
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 
-ARG PAYKIT_SERVER_REV=f38c7915e6b9b104e040773e78438f8aa984c46c
+ARG PAYKIT_SERVER_REPO=https://github.com/BitcoinErrorLog/paykit-server.git
+ARG PAYKIT_SERVER_REV=cb2bc3a1b2f43872a41b70241811764721c02502
 ARG PAYKIT_RS_REV=52a852995bfc457b78d32f5a45f6741766a89bba
 ARG LOCKS_DEP_REV=df5ea1b6d8dcdec3a9b5a915c3f57bca69d75c8a
 
@@ -34,24 +43,21 @@ RUN set -eu; \
     cp -a /tmp/locks/locks-core /tmp/locks/locks-service /tmp/locks/locks-server \
         /tmp/locks/locks-sdk /tmp/locks/locks-e2e /build/locks/; \
     rm -rf /tmp/locks; \
-    git clone https://github.com/pubky/paykit-server.git /build/paykit-server; \
+    git clone "$PAYKIT_SERVER_REPO" /build/paykit-server; \
     git -C /build/paykit-server checkout --detach "$PAYKIT_SERVER_REV"; \
     test "$(git -C /build/paykit-server rev-parse HEAD)" = "$PAYKIT_SERVER_REV"
 
 WORKDIR /build/paykit-server
 
-# Fail-closed patch: invoice intents must advertise the network-correct BIP84
-# P2WPKH endpoint identifier (btc-regtest-p2wpkh on regtest), the
-# spec-lowercase amount asset ("btc"), and the spec-recommended JSON endpoint
-# payload ({"value": "<address>"}). The pinned upstream rev hardcodes
-# btc-bitcoin-p2wpkh, "BTC", and a bare-string address payload, all of which
-# real wallets (Bitkit) reject; the demo reader masked all three. `git apply`
-# aborts the build on any drift.
-COPY regtest-endpoint-identifier.patch /build/regtest-endpoint-identifier.patch
-RUN git apply --verbose /build/regtest-endpoint-identifier.patch && \
-    grep -q 'btc-regtest-p2wpkh' paykit-server/src/application/create_invoice.rs && \
+# Fail-closed: the fork must carry the folded endpoint-identifier fixes
+# (formerly regtest-endpoint-identifier.patch) and the manual claim route;
+# building an upstream tree without them would silently ship a server real
+# wallets reject and the marketplace cannot register sellers on.
+RUN grep -q 'btc-regtest-p2wpkh' paykit-server/src/application/create_invoice.rs && \
     grep -q '"btc",' paykit-server/src/application/create_invoice.rs && \
-    grep -q 'json!({ "value": address })' paykit-server/src/application/create_invoice.rs
+    grep -q 'json!({ "value": address })' paykit-server/src/application/create_invoice.rs && \
+    grep -q '/v0/accounts/claim' paykit-server/src/http/accounts.rs && \
+    grep -q '/v0/payment-requests' paykit-server/src/http/payment_requests.rs
 
 # Fail-closed: rewrites the git dependency pins to the local paths above and
 # aborts if the supplied trees drift from the committed manifest pins.
