@@ -1,11 +1,12 @@
 # pubky-payment-rails
 
 Railway deployment of the Pubky marketplace staging payment rails: Lock Server
-(pubky/locks) + Paykit Server (pubky/paykit-server) + Bitcoin Core regtest +
+(pubky/locks) + Paykit Server (BitcoinErrorLog/paykit-server, marketplace-rails
+fork of pubky/paykit-server) + Bitcoin Core regtest +
 Fulcrum, running real payment mechanics with valueless regtest coins.
 
 This is the hosted version of the locally verified `payments-env` composed
-Docker environment. Every component is pinned to the exact upstream revision /
+Docker environment. Every component is pinned to the exact revision /
 image digest that passed the full end-to-end payment verification there.
 
 **REGTEST ONLY.** Nothing in this repo may ever be configured for Bitcoin
@@ -30,16 +31,18 @@ exists in this deployment.
 | Component | Source | Revision |
 | --- | --- | --- |
 | Lock Server | `pubky/locks` | `ba49a777a94db318ec6ebd427315080a5b904645` |
-| Paykit Server | `pubky/paykit-server` | `f38c7915e6b9b104e040773e78438f8aa984c46c` |
+| Paykit Server | `BitcoinErrorLog/paykit-server` (`marketplace-rails`; fork of `pubky/paykit-server` @ `f38c7915e6b9b104e040773e78438f8aa984c46c`) | `98f7c2251e5eabf1d7b14704dcdababf25499c53` |
 | paykit-rs (build dep) | `pubky/paykit-rs` | `52a852995bfc457b78d32f5a45f6741766a89bba` |
 | locks-core (build dep) | `pubky/locks` | `df5ea1b6d8dcdec3a9b5a915c3f57bca69d75c8a` |
 | bitcoind | `bitcoin/bitcoin:29.1` | `sha256:de62c536feb629bed65395f63afd02e3a7a777a3ec82fbed773d50336a739319` |
 | Fulcrum | `cculianu/fulcrum:v2.0.0` | `sha256:cb1c006d0cff104696f4791d0f1516699b2c163120165461385e4de206271943` |
 
-The Rust Dockerfiles clone the upstream repos at build time and fail closed if
-the checkout does not match the pin. The Paykit build additionally runs the
-upstream `prepare-local-docker-sources.sh`, which aborts if the supplied trees
-drift from the dependency pins committed in paykit-server's manifests.
+The Rust Dockerfiles clone the pinned repos at build time and fail closed if
+the checkout does not match the pin. Paykit Server is cloned from the
+`BitcoinErrorLog/paykit-server` fork, not from stock `pubky/paykit-server`.
+The Paykit build additionally runs `prepare-local-docker-sources.sh`, which
+aborts if the supplied trees drift from the dependency pins committed in
+paykit-server's manifests.
 
 ## Topology (Railway project `pubky-marketplace-staging`)
 
@@ -139,7 +142,11 @@ IPv6 wildcard.
   HTTP relay inbox base used by the manual claim session loopback.
 
 The paykit-server image builds from the `BitcoinErrorLog/paykit-server` fork
-(`marketplace-rails` branch), which adds on top of upstream `f38c7915`:
+(`marketplace-rails` branch) at `98f7c2251e5eabf1d7b14704dcdababf25499c53`,
+which adds on top of upstream `pubky/paykit-server` @ `f38c7915`:
+- network-correct endpoint identifiers, lowercase `"btc"` asset, and JSON
+  `{"value": address}` endpoint payloads (without these, real wallets such as
+  Bitkit silently reject the payment material)
 - `POST /v0/accounts/claim` - manual watch-only account registration for
   browser sellers. Body `{auth_token, account_xpub, account_index}`, where
   `auth_token` is the unpadded-base64url serialized Pubky AuthToken whose
