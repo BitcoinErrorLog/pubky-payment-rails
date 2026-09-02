@@ -167,13 +167,41 @@ which adds on top of upstream `pubky/paykit-server` @ `f38c7915`:
 
 ## Secrets handling
 
-No secret is committed to this repo. All secrets are Railway service
+No secret is committed to this repo. Driver identity material lives in `.env`
+(see Configuration). All deployment secrets are Railway service
 variables, generated fresh at deploy time (`openssl rand`), distinct from
 every local payments-env dev value. The Lock Server seed and the derived
 public key live only in Railway variables (plus the operator's offline
 records). The marketplace-service consumes `LOCKS_SERVER_URL`,
 `LOCKS_BUNDLE_ENCRYPTION_KEY`, `LOCKS_LOOKUP_HMAC_KEY` (fresh 32-byte hex
 keys, all-or-nothing fail-closed enablement).
+
+## Configuration
+
+The verification driver (`verify/driver.mjs`) reads configuration from the
+environment. Copy `.env.example` to `.env` (gitignored) and run
+`node --env-file=.env verify/driver.mjs ...`. Secrets, identities, recovery
+files, and device UDIDs have no in-repo defaults; missing required variables
+fail fast and name the variable.
+
+| Variable | Required when | Purpose |
+| --- | --- | --- |
+| `PUBKY_SDK_REQUIRE` | every driver invocation | Path to a `package.json` that can resolve `@synonymdev/pubky` |
+| `STAGING_HOMESERVER` | `signup` | Staging homeserver z32 public key |
+| `CREATOR_SECRET_FILE` or `CREATOR_RECOVERY_FILE` | commands that load the creator keypair | Creator identity |
+| `READER_SECRET_FILE` or `READER_RECOVERY_FILE` | commands that load the reader keypair | Reader identity |
+| `RECOVERY_PASSWORD` | recovery-file identities | Passphrase for `*.pkarr` recovery files |
+| `LOCKS_PUBLIC_KEY` | `publish` | Deployed Lock Server public key |
+| `LOCKS_SEED_B64URL` | `status` | Lock Server signing seed (no `keypair-seed:` prefix) |
+
+Optional driver overrides: `LOCKS_URL`, `PAYKIT_URL`, `FIAT_URL`,
+`RETURN_ORIGIN`, `CREATOR_PUBKY`, `READER_PUBKY`, `ASSET`, `AMOUNT`,
+`GUARDED_PATH`, `GUARDED_BODY`. Wallet-leg operator notes (not read by the
+driver) use `SELLER_UDID`, `BUYER_UDID`, `SELLER_PUBKY`, `BUYER_PUBKY`,
+`FULCRUM_PUBLIC_HOST`, `FULCRUM_PUBLIC_PORT`, and `WALLET_LEG_EVIDENCE_DIR`.
+
+Railway service secrets remain Railway variables only; see "Service
+environment variables" above.
 
 ## Consumers
 

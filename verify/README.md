@@ -1,9 +1,21 @@
 # Verification driver
 
 A standalone Node driver that exercises the DEPLOYED rails over public HTTPS
-with throwaway real-network identities. See the repo README "Consumers" and
-the deployment notes for how it was used. It depends on `@synonymdev/pubky`
-(resolve it against any checkout that has it installed, e.g. pubky-app).
+with throwaway real-network identities. See the repo README "Configuration"
+and "Consumers" sections for how it was used. It depends on `@synonymdev/pubky`
+(set `PUBKY_SDK_REQUIRE` to a `package.json` that can resolve it, e.g. a
+pubky-app checkout).
+
+Copy `.env.example` from the repo root to `.env` (gitignored) and load it:
+
+```
+node --env-file=.env verify/driver.mjs <command> ...
+```
+
+`PUBKY_SDK_REQUIRE` is always required. Identity material (`*_SECRET_FILE` or
+`*_RECOVERY_FILE`, plus `RECOVERY_PASSWORD` when using recovery files) has no
+in-repo default and fails fast naming the missing variable. `signup` also
+requires `STAGING_HOMESERVER`.
 
 Subcommands: gen, signup, identities, connect, setup-start, setup-claim,
 setup-poll, reader-marker, publish, negative, proof, status, lifecycle,
@@ -16,25 +28,25 @@ a `{amount: "1999", asset: "USD"}` criterion (19.99 USD in minor units), which
 the deployed Lock Server accepts unchanged and the fiat-verifier gateway
 settles through Stripe test mode. `GUARDED_PATH` picks the guarded upload path
 (default `content/premium.txt`). After `proof`, `checkout <bundleId>` fetches
-the hosted Stripe Checkout URL from the gateway (`FIAT_URL` env, default the
-deployed staging gateway); `status` can be pointed at the gateway with
-`PAYKIT_URL=https://fiat-verifier-production.up.railway.app` — BTC bundles are
+the hosted Stripe Checkout URL from the gateway (`FIAT_URL`); `status` can be
+pointed at the gateway with `PAYKIT_URL` set to that same URL — BTC bundles are
 answered by verbatim proxy to paykit-server, fiat bundles from gateway state.
 
 ## Staging-homeserver identities
 
 The full guarded-content purchase requires identities on a homeserver that
 supports `/priv/` writes (the production pubky.app homeserver rejects them;
-the official staging homeserver accepts them). With a signup token:
+the official staging homeserver accepts them). With `STAGING_HOMESERVER` set
+and a signup token:
 
 ```
-node driver.mjs gen ids/creator.secret
-CREATOR_SECRET_FILE=ids/creator.secret node driver.mjs signup CREATOR <token>
+node --env-file=.env verify/driver.mjs gen ids/creator.secret
+CREATOR_SECRET_FILE=ids/creator.secret node --env-file=.env verify/driver.mjs signup CREATOR <token>
 ```
 
 `CREATOR_SECRET_FILE` / `READER_SECRET_FILE` (base64url 32-byte secrets from
-`gen`) take precedence over the legacy recovery-file identities for every
-subcommand.
+`gen`) take precedence over `CREATOR_RECOVERY_FILE` / `READER_RECOVERY_FILE`
+for every subcommand that loads a keypair.
 
 Note: canonical creator identifiers in Paykit/Locks request bodies are
 `pubky`-prefixed app keys; bare z32 is rejected as non-canonical

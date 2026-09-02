@@ -1,4 +1,7 @@
 verify/reader-state-ctrl/
+.env
+.env.*
 *.env
+!.env.example
 .DS_Store
 ._*
