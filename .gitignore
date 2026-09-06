@@ -5,3 +5,4 @@ verify/reader-state-ctrl/
 !.env.example
 .DS_Store
 ._*
+target/

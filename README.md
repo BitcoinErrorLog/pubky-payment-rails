@@ -31,7 +31,7 @@ exists in this deployment.
 | Component | Source | Revision |
 | --- | --- | --- |
 | Lock Server | `pubky/locks` | `ba49a777a94db318ec6ebd427315080a5b904645` |
-| Paykit Server | `BitcoinErrorLog/paykit-server` (`marketplace-rails`; fork of `pubky/paykit-server` @ `f38c7915e6b9b104e040773e78438f8aa984c46c`) | `98f7c2251e5eabf1d7b14704dcdababf25499c53` |
+| Paykit Server | `BitcoinErrorLog/paykit-server` (`marketplace-rails`; fork of `pubky/paykit-server` @ `f38c7915e6b9b104e040773e78438f8aa984c46c`) | `9687ff07ec4cde7c18970c943d308c6b296a8a42` |
 | paykit-rs (build dep) | `pubky/paykit-rs` | `52a852995bfc457b78d32f5a45f6741766a89bba` |
 | locks-core (build dep) | `pubky/locks` | `df5ea1b6d8dcdec3a9b5a915c3f57bca69d75c8a` |
 | bitcoind | `bitcoin/bitcoin:29.1` | `sha256:de62c536feb629bed65395f63afd02e3a7a777a3ec82fbed773d50336a739319` |
@@ -138,11 +138,26 @@ IPv6 wildcard.
   signed business routes (`/v0/payment-requests`, `/transactions/status`,
   `/invoices`) exactly like Lock Server signatures. The transaction service
   holds the matching ed25519 seed (`PAYKIT_REQUEST_SIGNING_KEY`).
+- `MARKETPLACE_TRUSTED_PUBLIC_KEYS` (optional) - comma-separated list of
+  `pubky<z-base32>` public keys (whitespace tolerated), templated as the TOML
+  `marketplace.trusted_public_keys` list; every listed key is trusted equally.
+  Mutually exclusive with `MARKETPLACE_TRUSTED_PUBLIC_KEY`: setting both (or a
+  malformed/empty entry) fails the entrypoint before the server starts. Use
+  the list form to rotate signing keys without downtime (add the new key,
+  cut the service over, remove the old key).
+  To derive a key's public half from the marketplace-service's hex
+  `PAYKIT_REQUEST_SIGNING_KEY` seed (reads the seed from the env var, prints
+  ONLY the 52-character public key):
+
+  ```bash
+  PAYKIT_REQUEST_SIGNING_KEY=<64-hex-char seed> \
+    cargo run --quiet --manifest-path paykit-server/tools/derive-marketplace-pubkey/Cargo.toml
+  ```
 - `PAYKIT_AUTH_RELAY` (optional, default `https://httprelay.pubky.app/inbox`) -
   HTTP relay inbox base used by the manual claim session loopback.
 
 The paykit-server image builds from the `BitcoinErrorLog/paykit-server` fork
-(`marketplace-rails` branch) at `98f7c2251e5eabf1d7b14704dcdababf25499c53`,
+(`marketplace-rails` branch) at `9687ff07ec4cde7c18970c943d308c6b296a8a42`,
 which adds on top of upstream `pubky/paykit-server` @ `f38c7915`:
 - network-correct endpoint identifiers, lowercase `"btc"` asset, and JSON
   `{"value": address}` endpoint payloads (without these, real wallets such as
@@ -164,6 +179,10 @@ which adds on top of upstream `pubky/paykit-server` @ `f38c7915`:
   `{creator, reader, reference, amount_sats}` (canonical JSON, signed like
   `/invoices`); `reference` is a 26-char Crockford base32 identifier the
   marketplace also uses as `bundle_id` in `/transactions/status` polls.
+- `[marketplace] trusted_public_keys = [...]` config list form (mutually
+  exclusive with the single `trusted_public_key`): every listed key is
+  trusted equally for signed-request auth, enabling zero-downtime rotation
+  of the marketplace request-signing key.
 
 ## Secrets handling
 

@@ -1,0 +1,8 @@
+[package]
+name = "derive-marketplace-pubkey"
+version = "0.1.0"
+edition = "2021"
+description = "Derive the pubky public key from the marketplace-service PAYKIT_REQUEST_SIGNING_KEY hex seed"
+
+[dependencies]
+ed25519-dalek = "2"

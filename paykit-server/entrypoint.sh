@@ -23,11 +23,56 @@ set -eu
 electrum_endpoint="${PAYKIT_ELECTRUM_ENDPOINT:-tcp://fulcrum.railway.internal:50001}"
 listen_addr="${PAYKIT_LISTEN_ADDR:-[::]:3001}"
 
-# Optional marketplace transaction-service trust anchor: when set, requests
-# signed by this key are accepted on the signed business routes (payment
-# requests, status lookups) exactly like Lock Server signatures.
+# Optional marketplace transaction-service trust anchors: when set, requests
+# signed by any of these keys are accepted on the signed business routes
+# (payment requests, status lookups) exactly like Lock Server signatures.
+# MARKETPLACE_TRUSTED_PUBLIC_KEY (one key) and MARKETPLACE_TRUSTED_PUBLIC_KEYS
+# (comma-separated list, whitespace tolerated) are mutually exclusive and map
+# to the TOML single/list forms the fork accepts. Key values are never logged
+# - only the count.
+valid_pubky_key() {
+  # Canonical pubky public key: 52 z-base-32 characters (a subset of [a-z0-9]).
+  [ "${#1}" -eq 52 ] || return 1
+  case "$1" in
+    *[!a-z0-9]*) return 1 ;;
+  esac
+  return 0
+}
+
 marketplace_section=""
-if [ -n "${MARKETPLACE_TRUSTED_PUBLIC_KEY:-}" ]; then
+marketplace_key_count=0
+if [ -n "${MARKETPLACE_TRUSTED_PUBLIC_KEY:-}" ] && [ -n "${MARKETPLACE_TRUSTED_PUBLIC_KEYS:-}" ]; then
+  echo "[paykit-railway] error: MARKETPLACE_TRUSTED_PUBLIC_KEY and MARKETPLACE_TRUSTED_PUBLIC_KEYS are mutually exclusive; set exactly one" >&2
+  exit 1
+elif [ -n "${MARKETPLACE_TRUSTED_PUBLIC_KEYS:-}" ]; then
+  marketplace_keys_toml=""
+  for key in $(printf '%s' "$MARKETPLACE_TRUSTED_PUBLIC_KEYS" | tr ',' '\n'); do
+    key="$(printf '%s' "$key" | tr -d '[:space:]')"
+    [ -n "$key" ] || continue
+    if ! valid_pubky_key "$key"; then
+      echo "[paykit-railway] error: MARKETPLACE_TRUSTED_PUBLIC_KEYS entry $((marketplace_key_count + 1)) is not a 52-character z-base-32 pubky public key" >&2
+      exit 1
+    fi
+    marketplace_key_count=$((marketplace_key_count + 1))
+    if [ -z "$marketplace_keys_toml" ]; then
+      marketplace_keys_toml="\"$key\""
+    else
+      marketplace_keys_toml="$marketplace_keys_toml, \"$key\""
+    fi
+  done
+  if [ "$marketplace_key_count" -eq 0 ]; then
+    echo "[paykit-railway] error: MARKETPLACE_TRUSTED_PUBLIC_KEYS is set but contains no keys" >&2
+    exit 1
+  fi
+  marketplace_section="[marketplace]
+trusted_public_keys = [$marketplace_keys_toml]
+"
+elif [ -n "${MARKETPLACE_TRUSTED_PUBLIC_KEY:-}" ]; then
+  if ! valid_pubky_key "$MARKETPLACE_TRUSTED_PUBLIC_KEY"; then
+    echo "[paykit-railway] error: MARKETPLACE_TRUSTED_PUBLIC_KEY is not a 52-character z-base-32 pubky public key" >&2
+    exit 1
+  fi
+  marketplace_key_count=1
   marketplace_section="[marketplace]
 trusted_public_key = \"$MARKETPLACE_TRUSTED_PUBLIC_KEY\"
 "
@@ -80,5 +125,12 @@ poll_interval = "1s"
 poll_interval = "500ms"
 EOF
 
+if [ "$marketplace_key_count" -gt 0 ]; then
+  echo "[paykit-railway] marketplace trusted signing keys configured: $marketplace_key_count"
+fi
 echo "[paykit-railway] starting paykit-server (trusted locks key $PAYKIT_TRUSTED_LOCKS_PUBLIC_KEY, electrum $electrum_endpoint)"
+if [ "${PAYKIT_ENTRYPOINT_RENDER_ONLY:-0}" = "1" ]; then
+  echo "[paykit-railway] PAYKIT_ENTRYPOINT_RENDER_ONLY=1: wrote $config_path, not starting server"
+  exit 0
+fi
 exec /usr/local/bin/paykit-server
