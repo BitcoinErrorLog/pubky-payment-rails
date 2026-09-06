@@ -31,10 +31,19 @@ listen_addr="${PAYKIT_LISTEN_ADDR:-[::]:3001}"
 # to the TOML single/list forms the fork accepts. Key values are never logged
 # - only the count.
 valid_pubky_key() {
-  # Canonical pubky public key: 52 z-base-32 characters (a subset of [a-z0-9]).
-  [ "${#1}" -eq 52 ] || return 1
+  # Parser contract (proven against the fork's config parser in
+  # BitcoinErrorLog/paykit-server @ 37ffdd4): exactly 57 characters - the
+  # "pubky" prefix plus a 52-character body in the z-base-32 alphabet
+  # ybndrfg8ejkmcpqxot1uwisza345h769. Bare 52-char keys are rejected by the
+  # fork parser (InvalidTrustedMarketplacePublicKey), so they are rejected
+  # here too: accepting one would render TOML the server refuses to boot with.
+  [ "${#1}" -eq 57 ] || return 1
   case "$1" in
-    *[!a-z0-9]*) return 1 ;;
+    pubky*) ;;
+    *) return 1 ;;
+  esac
+  case "${1#pubky}" in
+    *[!ybndrfg8ejkmcpqxot1uwisza345h769]*) return 1 ;;
   esac
   return 0
 }
@@ -46,11 +55,16 @@ if [ -n "${MARKETPLACE_TRUSTED_PUBLIC_KEY:-}" ] && [ -n "${MARKETPLACE_TRUSTED_P
   exit 1
 elif [ -n "${MARKETPLACE_TRUSTED_PUBLIC_KEYS:-}" ]; then
   marketplace_keys_toml=""
-  for key in $(printf '%s' "$MARKETPLACE_TRUSTED_PUBLIC_KEYS" | tr ',' '\n'); do
+  # Split on commas with a set -f / while-read loop (no word splitting or
+  # glob expansion of key material). The here-document keeps the loop in the
+  # current shell so marketplace_key_count/marketplace_keys_toml survive;
+  # the `|| [ -n "$key" ]` guard preserves a final line without a newline.
+  set -f
+  while IFS= read -r key || [ -n "$key" ]; do
     key="$(printf '%s' "$key" | tr -d '[:space:]')"
     [ -n "$key" ] || continue
     if ! valid_pubky_key "$key"; then
-      echo "[paykit-railway] error: MARKETPLACE_TRUSTED_PUBLIC_KEYS entry $((marketplace_key_count + 1)) is not a 52-character z-base-32 pubky public key" >&2
+      echo "[paykit-railway] error: MARKETPLACE_TRUSTED_PUBLIC_KEYS entry $((marketplace_key_count + 1)) is not a 57-character pubky-prefixed z-base-32 public key" >&2
       exit 1
     fi
     marketplace_key_count=$((marketplace_key_count + 1))
@@ -59,7 +73,10 @@ elif [ -n "${MARKETPLACE_TRUSTED_PUBLIC_KEYS:-}" ]; then
     else
       marketplace_keys_toml="$marketplace_keys_toml, \"$key\""
     fi
-  done
+  done <<EOF_KEYS
+$(printf '%s' "$MARKETPLACE_TRUSTED_PUBLIC_KEYS" | tr ',' '\n')
+EOF_KEYS
+  set +f
   if [ "$marketplace_key_count" -eq 0 ]; then
     echo "[paykit-railway] error: MARKETPLACE_TRUSTED_PUBLIC_KEYS is set but contains no keys" >&2
     exit 1
@@ -69,7 +86,7 @@ trusted_public_keys = [$marketplace_keys_toml]
 "
 elif [ -n "${MARKETPLACE_TRUSTED_PUBLIC_KEY:-}" ]; then
   if ! valid_pubky_key "$MARKETPLACE_TRUSTED_PUBLIC_KEY"; then
-    echo "[paykit-railway] error: MARKETPLACE_TRUSTED_PUBLIC_KEY is not a 52-character z-base-32 pubky public key" >&2
+    echo "[paykit-railway] error: MARKETPLACE_TRUSTED_PUBLIC_KEY is not a 57-character pubky-prefixed z-base-32 public key" >&2
     exit 1
   fi
   marketplace_key_count=1

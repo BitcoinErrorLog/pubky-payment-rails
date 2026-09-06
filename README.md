@@ -145,14 +145,25 @@ IPv6 wildcard.
   malformed/empty entry) fails the entrypoint before the server starts. Use
   the list form to rotate signing keys without downtime (add the new key,
   cut the service over, remove the old key).
+  Key form note: the paykit-server fork's config parser accepts ONLY the
+  57-character `pubky`-prefixed form (`pubky` + 52 z-base-32 chars from the
+  alphabet `ybndrfg8ejkmcpqxot1uwisza345h769`); a bare 52-char key is
+  rejected at server startup, so the entrypoint validator rejects it first.
   To derive a key's public half from the marketplace-service's hex
-  `PAYKIT_REQUEST_SIGNING_KEY` seed (reads the seed from the env var, prints
-  ONLY the 52-character public key):
+  `PAYKIT_REQUEST_SIGNING_KEY` seed, use the
+  `paykit-server/tools/derive-marketplace-pubkey` tool: it prints ONLY the
+  57-character `pubky`-prefixed public key and zeroizes the seed buffer.
+  Prefer `--stdin` so the seed never lands in shell history:
 
   ```bash
-  PAYKIT_REQUEST_SIGNING_KEY=<64-hex-char seed> \
-    cargo run --quiet --manifest-path paykit-server/tools/derive-marketplace-pubkey/Cargo.toml
+  read -rs PAYKIT_REQUEST_SIGNING_KEY && export PAYKIT_REQUEST_SIGNING_KEY && \
+    printf '%s' "$PAYKIT_REQUEST_SIGNING_KEY" | \
+    cargo run --quiet --manifest-path paykit-server/tools/derive-marketplace-pubkey/Cargo.toml -- --stdin; \
+    unset PAYKIT_REQUEST_SIGNING_KEY
   ```
+
+  (The tool also still reads `PAYKIT_REQUEST_SIGNING_KEY` from the
+  environment when `--stdin` is not passed.)
 - `PAYKIT_AUTH_RELAY` (optional, default `https://httprelay.pubky.app/inbox`) -
   HTTP relay inbox base used by the manual claim session loopback.
 

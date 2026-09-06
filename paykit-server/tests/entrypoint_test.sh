@@ -2,18 +2,28 @@
 # Tests for the marketplace trust-anchor templating in ../entrypoint.sh.
 #
 # Runs the entrypoint in render-only mode (PAYKIT_ENTRYPOINT_RENDER_ONLY=1)
-# against fake 52-character z-base-32-looking fixtures - never real keys -
-# and asserts the emitted TOML form and exit behaviour. Every successfully
-# rendered config is also parsed with python3's tomllib (Python >= 3.11).
+# against real-format throwaway fixtures - 57-char `pubky`-prefixed z-base-32
+# keys derived from random one-off seeds with
+# ../tools/derive-marketplace-pubkey (the seeds were discarded immediately;
+# these public keys identify nothing). Every successfully rendered config is
+# parsed with python3's tomllib (Python >= 3.11), and the rendered keys are
+# validated against the REAL fork parser contract (see the P3 section at the
+# bottom).
 set -u
 
 cd "$(dirname "$0")"
 ENTRYPOINT="../entrypoint.sh"
 
-# Fake fixtures: 52 chars from the z-base-32 alphabet, not real keys.
-KEY_A="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-KEY_B="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-KEY_L="cccccccccccccccccccccccccccccccccccccccccccccccccccc"
+# Throwaway real-format fixtures (random seeds, since discarded; never real
+# key material). Form: "pubky" + 52 z-base-32 chars = 57 chars, exactly what
+# the fork config parser accepts.
+KEY_A="pubky87q1j1ftjnnjbekx46wmg1ixyd6rbxzsiyb3ksuphwdgtku3mmey"
+KEY_B="pubky6p418m9j7huogm1ny9xk56fzq55kdyer7uortacww1k7nxxxgspy"
+KEY_L="pubkynruz6nicigk91bctyw7ueq1tshd9wb3qfkeqgmcicghpmjrnsquy"
+# Same key material without the `pubky` prefix: the fork parser REJECTS this
+# bare 52-char form (InvalidTrustedMarketplacePublicKey), so the entrypoint
+# must reject it too rather than render TOML the server cannot boot with.
+KEY_A_BARE="${KEY_A#pubky}"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -43,6 +53,24 @@ toml_parses() {
 import sys, tomllib
 with open(sys.argv[1], "rb") as f:
     tomllib.load(f)
+PY
+}
+
+# Every marketplace key rendered into the TOML must match the exact form the
+# fork parser accepts: ^pubky[ybndrfg8ejkmcpqxot1uwisza345h769]{52}$ .
+rendered_keys_match_parser_form() {
+  python3 - "$TMP/config.toml" <<'PY'
+import re, sys, tomllib
+with open(sys.argv[1], "rb") as f:
+    cfg = tomllib.load(f)
+marketplace = cfg.get("marketplace", {})
+keys = []
+if "trusted_public_key" in marketplace:
+    keys.append(marketplace["trusted_public_key"])
+keys.extend(marketplace.get("trusted_public_keys", []))
+assert keys, "no marketplace keys rendered"
+form = re.compile(r"^pubky[ybndrfg8ejkmcpqxot1uwisza345h769]{52}$")
+assert all(form.match(k) for k in keys), keys
 PY
 }
 
@@ -103,11 +131,23 @@ fi
 # 4. Malformed list entry: fail non-zero, no key values logged.
 if run_render "$TMP/out" "$TMP/err" MARKETPLACE_TRUSTED_PUBLIC_KEYS="$KEY_A,notakey"; then
   not_ok "malformed MARKETPLACE_TRUSTED_PUBLIC_KEYS entry fails"
-elif grep -q "entry 2 is not a 52-character" "$TMP/err" \
+elif grep -q "entry 2 is not a 57-character" "$TMP/err" \
   && ! grep -q "$KEY_A" "$TMP/err"; then
   ok "malformed MARKETPLACE_TRUSTED_PUBLIC_KEYS entry fails"
 else
   not_ok "malformed MARKETPLACE_TRUSTED_PUBLIC_KEYS entry fails"
+fi
+
+# 4b. Bare 52-char z-base-32 key (no `pubky` prefix): the fork parser rejects
+# this form, so the entrypoint must reject it in BOTH env forms.
+if run_render "$TMP/out" "$TMP/err" MARKETPLACE_TRUSTED_PUBLIC_KEY="$KEY_A_BARE"; then
+  not_ok "bare 52-char MARKETPLACE_TRUSTED_PUBLIC_KEY is rejected"
+elif run_render "$TMP/out" "$TMP/err" MARKETPLACE_TRUSTED_PUBLIC_KEYS="$KEY_A_BARE"; then
+  not_ok "bare 52-char MARKETPLACE_TRUSTED_PUBLIC_KEY is rejected"
+elif grep -q "57-character pubky-prefixed" "$TMP/err"; then
+  ok "bare 52-char MARKETPLACE_TRUSTED_PUBLIC_KEY is rejected"
+else
+  not_ok "bare 52-char MARKETPLACE_TRUSTED_PUBLIC_KEY is rejected"
 fi
 
 # 5. Neither set: no [marketplace] section, config still parses.
@@ -117,6 +157,38 @@ if run_render "$TMP/out" "$TMP/err" \
   ok "neither variable set emits no [marketplace] section"
 else
   not_ok "neither variable set emits no [marketplace] section"
+fi
+
+# 6 (P3). Rendered-key contract against the REAL fork parser. The fork
+# binary has no --check-config flag and this session cannot add an env-path
+# TOML loader test to the fork, so the proof is two-part:
+#   (a) local: every key the entrypoint renders matches
+#       ^pubky[ybndrfg8ejkmcpqxot1uwisza345h769]{52}$ - the only form the
+#       fork parser accepts;
+#   (b) fork: re-run the fork's own parser contract test
+#       (marketplace_config_trusted_public_key_accepts_prefixed_and_rejects_bare_forms,
+#       fork commit 37ffdd4) which proves that exact form PARSES and the bare
+#       52-char form is REJECTED by Config::from_toml_and_environment.
+FORK_DIR="${PAYKIT_SERVER_FORK_DIR:-/Users/johncarvalho/work/paykit-server-fork}"
+if run_render "$TMP/out" "$TMP/err" MARKETPLACE_TRUSTED_PUBLIC_KEYS="$KEY_A, $KEY_B" \
+  && toml_parses \
+  && rendered_keys_match_parser_form; then
+  ok "rendered marketplace keys match ^pubky[z-base-32]{52}\$ (parser-accepted form)"
+else
+  not_ok "rendered marketplace keys match ^pubky[z-base-32]{52}\$ (parser-accepted form)"
+fi
+
+if [ -f "$FORK_DIR/Cargo.toml" ]; then
+  if cargo test -q -p paykit-server --manifest-path "$FORK_DIR/Cargo.toml" \
+      --test config marketplace_config >"$TMP/forktest.log" 2>&1; then
+    ok "fork parser contract test passes (prefixed parses, bare rejected; $FORK_DIR)"
+  else
+    not_ok "fork parser contract test passes (prefixed parses, bare rejected; $FORK_DIR)"
+    cat "$TMP/forktest.log" >&2
+  fi
+else
+  echo "SKIP - fork parser validation: no fork checkout at $FORK_DIR"
+  echo "       (set PAYKIT_SERVER_FORK_DIR; full parse-forms proof lives in fork commit 37ffdd4)"
 fi
 
 echo

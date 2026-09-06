@@ -6,3 +6,4 @@ description = "Derive the pubky public key from the marketplace-service PAYKIT_R
 
 [dependencies]
 ed25519-dalek = "2"
+zeroize = "1"
