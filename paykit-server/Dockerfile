@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 
 ARG PAYKIT_SERVER_REPO=https://github.com/BitcoinErrorLog/paykit-server.git
 ARG PAYKIT_SERVER_BRANCH=marketplace-rails
-ARG PAYKIT_SERVER_REV=9687ff07ec4cde7c18970c943d308c6b296a8a42
+ARG PAYKIT_SERVER_REV=92e3c844993379ce3f3ea32c1e62e8fb0b46e6d3
 ARG PAYKIT_RS_REV=52a852995bfc457b78d32f5a45f6741766a89bba
 ARG LOCKS_DEP_REV=df5ea1b6d8dcdec3a9b5a915c3f57bca69d75c8a
 
