@@ -150,6 +150,38 @@ else
   not_ok "bare 52-char MARKETPLACE_TRUSTED_PUBLIC_KEY is rejected"
 fi
 
+# 4c. Empty middle entry ("a,,b"): fail fast, naming the 1-based entry index
+# and never any key value - a silently skipped entry would boot the server
+# with fewer trust anchors than configured.
+if run_render "$TMP/out" "$TMP/err" MARKETPLACE_TRUSTED_PUBLIC_KEYS="$KEY_A,,$KEY_B"; then
+  not_ok "empty middle MARKETPLACE_TRUSTED_PUBLIC_KEYS entry fails"
+elif grep -q "entry 2 is empty" "$TMP/err" \
+  && ! grep -q "$KEY_A" "$TMP/err" && ! grep -q "$KEY_B" "$TMP/err"; then
+  ok "empty middle MARKETPLACE_TRUSTED_PUBLIC_KEYS entry fails"
+else
+  not_ok "empty middle MARKETPLACE_TRUSTED_PUBLIC_KEYS entry fails"
+fi
+
+# 4d. Trailing comma: same fail-fast contract, at the final entry index.
+if run_render "$TMP/out" "$TMP/err" MARKETPLACE_TRUSTED_PUBLIC_KEYS="$KEY_A,$KEY_B,"; then
+  not_ok "trailing comma in MARKETPLACE_TRUSTED_PUBLIC_KEYS fails"
+elif grep -q "entry 3 is empty" "$TMP/err" \
+  && ! grep -q "$KEY_A" "$TMP/err" && ! grep -q "$KEY_B" "$TMP/err"; then
+  ok "trailing comma in MARKETPLACE_TRUSTED_PUBLIC_KEYS fails"
+else
+  not_ok "trailing comma in MARKETPLACE_TRUSTED_PUBLIC_KEYS fails"
+fi
+
+# 4e. Whitespace around keys and commas stays tolerated: " a , b " is 2 keys.
+if run_render "$TMP/out" "$TMP/err" MARKETPLACE_TRUSTED_PUBLIC_KEYS=" $KEY_A , $KEY_B " \
+  && grep -q "^trusted_public_keys = \[\"$KEY_A\", \"$KEY_B\"\]$" "$TMP/config.toml" \
+  && toml_parses \
+  && grep -q "marketplace trusted signing keys configured: 2" "$TMP/out"; then
+  ok "whitespace-padded MARKETPLACE_TRUSTED_PUBLIC_KEYS still accepts 2 keys"
+else
+  not_ok "whitespace-padded MARKETPLACE_TRUSTED_PUBLIC_KEYS still accepts 2 keys"
+fi
+
 # 5. Neither set: no [marketplace] section, config still parses.
 if run_render "$TMP/out" "$TMP/err" \
   && ! grep -q "\[marketplace\]" "$TMP/config.toml" \

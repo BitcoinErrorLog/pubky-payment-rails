@@ -59,12 +59,27 @@ elif [ -n "${MARKETPLACE_TRUSTED_PUBLIC_KEYS:-}" ]; then
   # glob expansion of key material). The here-document keeps the loop in the
   # current shell so marketplace_key_count/marketplace_keys_toml survive;
   # the `|| [ -n "$key" ]` guard preserves a final line without a newline.
+  # Empty entries (double/leading/trailing commas, whitespace-only entries)
+  # fail fast with their 1-based entry index - never the value - instead of
+  # being silently skipped: a skipped entry would boot the server with fewer
+  # trust anchors than the operator configured. The sentinel appended after
+  # the final comma keeps a trailing comma visible as an empty last entry
+  # (command substitution strips trailing newlines, which would hide it).
+  entry_index=0
+  keys_end_sentinel="__paykit_trusted_keys_end__"
   set -f
   while IFS= read -r key || [ -n "$key" ]; do
+    if [ "$key" = "$keys_end_sentinel" ]; then
+      break
+    fi
+    entry_index=$((entry_index + 1))
     key="$(printf '%s' "$key" | tr -d '[:space:]')"
-    [ -n "$key" ] || continue
+    if [ -z "$key" ]; then
+      echo "[paykit-railway] error: MARKETPLACE_TRUSTED_PUBLIC_KEYS entry $entry_index is empty; remove empty entries from the comma-separated list" >&2
+      exit 1
+    fi
     if ! valid_pubky_key "$key"; then
-      echo "[paykit-railway] error: MARKETPLACE_TRUSTED_PUBLIC_KEYS entry $((marketplace_key_count + 1)) is not a 57-character pubky-prefixed z-base-32 public key" >&2
+      echo "[paykit-railway] error: MARKETPLACE_TRUSTED_PUBLIC_KEYS entry $entry_index is not a 57-character pubky-prefixed z-base-32 public key" >&2
       exit 1
     fi
     marketplace_key_count=$((marketplace_key_count + 1))
@@ -74,7 +89,7 @@ elif [ -n "${MARKETPLACE_TRUSTED_PUBLIC_KEYS:-}" ]; then
       marketplace_keys_toml="$marketplace_keys_toml, \"$key\""
     fi
   done <<EOF_KEYS
-$(printf '%s' "$MARKETPLACE_TRUSTED_PUBLIC_KEYS" | tr ',' '\n')
+$(printf '%s,%s' "$MARKETPLACE_TRUSTED_PUBLIC_KEYS" "$keys_end_sentinel" | tr ',' '\n')
 EOF_KEYS
   set +f
   if [ "$marketplace_key_count" -eq 0 ]; then
