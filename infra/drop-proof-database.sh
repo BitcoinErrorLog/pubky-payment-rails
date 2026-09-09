@@ -54,11 +54,14 @@
 #      -> The plan is printed in BOTH modes and states the mode in capitals;
 #         dry run ends with "DRY RUN - NO ACTION TAKEN" and exit 0.
 #
-# Usage:
-#   PAYKIT_PROOF_DROP_CONFIRM=c991d768 \
+# Usage (FIRST edit PROOF_PROJECT_ID below to the FULL proof project id -
+# the shipped value is the documented 8-char prefix and Guard 4 requires
+# exact equality, so as shipped this script refuses against real Railway;
+# the immutability guard stays exactly as it is):
+#   PAYKIT_PROOF_DROP_CONFIRM=<full proof project id> \
 #     infra/drop-proof-database.sh --i-understand-this-drops-the-proof-database
 #       # dry run: prints the plan, exits 0, touches nothing
-#   PAYKIT_PROOF_DROP_CONFIRM=c991d768 \
+#   PAYKIT_PROOF_DROP_CONFIRM=<full proof project id> \
 #     infra/drop-proof-database.sh --i-understand-this-drops-the-proof-database --execute
 #       # issues exactly one delete, against paykit-proof-postgres
 #

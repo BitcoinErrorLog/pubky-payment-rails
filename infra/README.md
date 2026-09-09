@@ -109,9 +109,14 @@ not exist while the proof stack is being built.
    `PAYKIT_SETUP_ALLOWED_ORIGINS`, `PAYKIT_SERVER_URL` on production
    `marketplace-service`, `PUBKY_RUNTIME_PAYKIT_SETUP_URL` on Vercel,
    redeploy both.
-9. **After the wave report is archived**, drop the proof database:
+9. **After the wave report is archived**, drop the proof database. **First
+   edit `PROOF_PROJECT_ID` in `infra/drop-proof-database.sh` to the FULL
+   proof project id** — the shipped value is the documented 8-char prefix
+   and the exact-equality guard refuses anything but the full id, so as
+   shipped the script cannot execute against real Railway (fail-closed, by
+   design); `PAYKIT_PROOF_DROP_CONFIRM` must then equal that same full id:
    ```sh
-   PAYKIT_PROOF_DROP_CONFIRM=c991d768 \
+   PAYKIT_PROOF_DROP_CONFIRM=<full proof project id> \
      infra/drop-proof-database.sh --i-understand-this-drops-the-proof-database
      # read the plan; then re-run with --execute appended to act
    ```
