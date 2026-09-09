@@ -178,6 +178,50 @@ else
   sed 's/^/  out: /' "$TMP/out10"; sed 's/^/  err: /' "$TMP/err10"
 fi
 
+# 11 (audit P2). An openssl FAILURE must abort the run before any generated
+# key is stored: the old pipeline (`openssl | tr | tr`) returned the last
+# tr's status, masking the failure and storing an EMPTY key that passed
+# readback ("" == ""). Shim openssl to exit 1 via PATH; assert refusal and
+# zero secret-storing `variables set` calls (the stdin form is used ONLY for
+# generated keys, so zero <redacted:stdin> lines proves the same).
+rm -rf "$FAKE_RAILWAY_STATE_DIR"
+: > "$FAKE_RAILWAY_LOG"
+mkdir -p "$TMP/nossl"
+printf '#!/bin/sh\nexit 1\n' > "$TMP/nossl/openssl"
+chmod +x "$TMP/nossl/openssl"
+if PATH="$TMP/nossl:$PATH" sh "$SCRIPT" proof \
+    --image-digest "$DIGEST" \
+    --locks-public-key "$KEY_L" \
+    --allowed-origins "https://shop.example" >"$TMP/out11" 2>"$TMP/err11"; then
+  not_ok "failing openssl aborts before any generated key is stored"
+elif grep -Eq 'variables set PAYKIT_(MASTER|REQUEST_SIGNING)_KEY' "$FAKE_RAILWAY_LOG" \
+  || grep -q '<redacted:stdin>' "$FAKE_RAILWAY_LOG"; then
+  not_ok "failing openssl aborts before any generated key is stored"
+else
+  ok "failing openssl aborts before any generated key is stored"
+fi
+
+# 12 (audit P2). A short/garbage openssl output (exit 0) must fail the
+# 43-char base64url validation with a clear refusal and likewise store
+# NOTHING - validation runs BEFORE `railway variables set`.
+rm -rf "$FAKE_RAILWAY_STATE_DIR"
+: > "$FAKE_RAILWAY_LOG"
+mkdir -p "$TMP/shortssl"
+printf '#!/bin/sh\nprintf "0123456789"\n' > "$TMP/shortssl/openssl"
+chmod +x "$TMP/shortssl/openssl"
+if PATH="$TMP/shortssl:$PATH" sh "$SCRIPT" proof \
+    --image-digest "$DIGEST" \
+    --locks-public-key "$KEY_L" \
+    --allowed-origins "https://shop.example" >"$TMP/out12" 2>"$TMP/err12"; then
+  not_ok "short openssl output is refused by the 43-char validation, nothing stored"
+elif ! grep -q "generated PAYKIT_MASTER_KEY is not 43 characters; refusing to store it" "$TMP/err12" \
+  || grep -Eq 'variables set PAYKIT_(MASTER|REQUEST_SIGNING)_KEY' "$FAKE_RAILWAY_LOG" \
+  || grep -q '<redacted:stdin>' "$FAKE_RAILWAY_LOG"; then
+  not_ok "short openssl output is refused by the 43-char validation, nothing stored"
+else
+  ok "short openssl output is refused by the 43-char validation, nothing stored"
+fi
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

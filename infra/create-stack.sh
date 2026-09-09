@@ -175,12 +175,27 @@ fi
 # config.rs InvalidMasterKey). The value travels: openssl stdout -> railway
 # stdin. It is never in this script's argv, never echoed, never on disk.
 gen_key() {
-  openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n'
+  # Generate into a variable FIRST: POSIX sh pipelines return the LAST
+  # command's status, so `openssl ... | tr | tr` would mask an openssl
+  # failure (both tr stages exit 0 on empty input) and yield an EMPTY key
+  # that then passes readback ("" == ""). The bare assignment below lets
+  # set -e abort the run on a nonzero openssl before anything is stored.
+  raw="$(openssl rand -base64 32)"
+  printf '%s' "$raw" | tr '+/' '-_' | tr -d '=\n'
 }
 
 for secret_key in PAYKIT_MASTER_KEY PAYKIT_REQUEST_SIGNING_KEY; do
   if [ -z "$(get_var "$secret_key")" ]; then
     secret_value="$(gen_key)"
+    # Validate the key format BEFORE any `railway variables set`: exactly 43
+    # characters of unpadded base64url. Any anomaly stores NOTHING - an
+    # empty or malformed key must never reach Railway, where it would pass
+    # readback and leave a stack that cannot boot (InvalidMasterKey).
+    [ "${#secret_value}" -eq 43 ] \
+      || die "generated $secret_key is not 43 characters; refusing to store it"
+    case "$secret_value" in
+      *[!A-Za-z0-9_-]*) die "generated $secret_key is not unpadded base64url; refusing to store it" ;;
+    esac
     printf '%s' "$secret_value" | "$RAILWAY_BIN" variables set "$secret_key" >/dev/null
     # Readback verification: an installed CLI WITHOUT the stdin form of
     # `variables set KEY` silently stores nothing (or prompts). Detect that
