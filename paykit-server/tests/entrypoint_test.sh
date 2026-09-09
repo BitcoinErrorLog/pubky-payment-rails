@@ -297,6 +297,35 @@ else
   ok "mainnet with one-second cadence fails before writing config"
 fi
 
+# 11 (§C.8). The boot line prints the pinned image digest exactly once and
+# never any secret. PAYKIT_IMAGE_DIGEST (wired by infra/create-stack.sh from
+# the same --image-digest the service is pinned to) is the primary source;
+# IMAGE_DIGEST (a Dockerfile-baked value) is the fallback; neither set renders
+# "unknown".
+DIGEST="sha256:$(printf 'a%.0s' $(seq 64))"
+if run_render "$TMP/out" "$TMP/err" PAYKIT_IMAGE_DIGEST="$DIGEST" \
+  && [ "$(grep -c "image $DIGEST" "$TMP/out")" -eq 1 ] \
+  && grep -q "starting paykit-server (image $DIGEST, network regtest, stack_role proof" "$TMP/out" \
+  && ! grep -q "dummy" "$TMP/out"; then
+  ok "boot line prints PAYKIT_IMAGE_DIGEST once and no secret values"
+else
+  not_ok "boot line prints PAYKIT_IMAGE_DIGEST once and no secret values"
+fi
+
+if run_render "$TMP/out" "$TMP/err" IMAGE_DIGEST="$DIGEST" \
+  && grep -q "image $DIGEST" "$TMP/out"; then
+  ok "boot line falls back to a Dockerfile-baked IMAGE_DIGEST"
+else
+  not_ok "boot line falls back to a Dockerfile-baked IMAGE_DIGEST"
+fi
+
+if run_render "$TMP/out" "$TMP/err" \
+  && grep -q "image unknown" "$TMP/out"; then
+  ok "boot line prints image unknown when no digest is wired"
+else
+  not_ok "boot line prints image unknown when no digest is wired"
+fi
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

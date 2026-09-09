@@ -11,10 +11,54 @@
 #   - [paykit] network = "mainnet": the Paykit SDK resolves identities via the
 #     default public pkarr relays, which the official staging Pubky network
 #     publishes to, so staging app users can be creators/readers.
-#   - [bitcoin] network and [electrum] cadence are selected from environment,
-#     with regtest and 1s defaults for byte-identical existing deployments.
-#   - [deployment] stack_role is required on every network and must be
-#     production or proof.
+#
+# Variables (design: mp-btc-design docs/ecommerce/btc-mainnet.md r13, §B.1/§C):
+#
+#   Required, no default:
+#     PAYKIT_TRUSTED_LOCKS_PUBLIC_KEY  pubky key of the Lock Server (above).
+#     PAYKIT_DATABASE_URL              postgres://... for THIS stack only -
+#                                      never shared across networks or roles.
+#     PAYKIT_MASTER_KEY                unpadded base64url of exactly 32 bytes,
+#                                      per-stack (never echoed or persisted here).
+#     PAYKIT_SETUP_ALLOWED_ORIGINS     comma-separated exact origins.
+#     PAYKIT_STACK_ROLE                production|proof. Required on every
+#                                      network: the fork's DeploymentInvariants
+#                                      adopts it once on first boot and refuses
+#                                      every later mismatch, so a database can
+#                                      never be booted by the wrong role.
+#   Optional, with defaults:
+#     PAYKIT_BITCOIN_NETWORK           regtest (default) | mainnet | testnet |
+#                                      signet; any other value fails closed
+#                                      before the config is written.
+#     PAYKIT_ELECTRUM_POLL_INTERVAL    1s (default); must match ^[0-9]+(ms|s|m)$
+#                                      and be >= 30s when the network is not
+#                                      regtest (30s for the mainnet stacks).
+#     PAYKIT_ELECTRUM_ENDPOINT         tcp://fulcrum.railway.internal:50001
+#                                      (default, regtest); the mainnet stacks
+#                                      use ssl://bitkit.to:9999 per §B.2, with
+#                                      ssl://electrum.blockstream.info:50002
+#                                      as documented failover only.
+#     PAYKIT_BITCOIN_CREATION_ENABLED  true|false; unset renders nothing and the
+#                                      fork default (true) applies. The §C.16
+#                                      kill switch: false refuses new payment
+#                                      requests while activate/void/resolve and
+#                                      existing-invoice observation keep working.
+#     PAYKIT_LISTEN_ADDR               [::]:3001 (default).
+#     PAYKIT_AUTH_RELAY                unset (default) = the public
+#                                      https://httprelay.pubky.app/inbox.
+#     MARKETPLACE_TRUSTED_PUBLIC_KEY / MARKETPLACE_TRUSTED_PUBLIC_KEYS
+#                                      unset (default) = no marketplace trust
+#                                      anchors; the two forms are mutually
+#                                      exclusive. Only the count is logged.
+#     PAYKIT_CONFIG                    /home/paykit/paykit-server.toml (default).
+#     PAYKIT_ENTRYPOINT_RENDER_ONLY    0 (default); 1 writes the config and
+#                                      exits without starting the server.
+#     PAYKIT_IMAGE_DIGEST              sha256:... the operator pinned this
+#                                      service to (§C.8: one digest D across
+#                                      stacks). IMAGE_DIGEST is a fallback for
+#                                      a Dockerfile-baked value; "unknown" if
+#                                      neither is set. Printed once at boot,
+#                                      never any secret.
 set -eu
 
 : "${PAYKIT_TRUSTED_LOCKS_PUBLIC_KEY:?PAYKIT_TRUSTED_LOCKS_PUBLIC_KEY is required}"
@@ -83,6 +127,13 @@ fi
 
 electrum_host="${electrum_endpoint#*://}"
 electrum_host="${electrum_host##*@}"
+
+# §C row 8: one pinned image digest D across every stack, printed on every
+# boot line so each proof can assert it observed exactly D. Railway exposes no
+# image-digest deploy variable for Dockerfile builds, so the IaC script wires
+# PAYKIT_IMAGE_DIGEST from the same digest the service is pinned to; a
+# Dockerfile-baked IMAGE_DIGEST is honored as a fallback. Never a secret.
+image_digest="${PAYKIT_IMAGE_DIGEST:-${IMAGE_DIGEST:-unknown}}"
 
 # Optional marketplace transaction-service trust anchors: when set, requests
 # signed by any of these keys are accepted on the signed business routes
@@ -230,7 +281,7 @@ printf '%s' "$stack_role_line" >> "$config_path"
 if [ "$marketplace_key_count" -gt 0 ]; then
   echo "[paykit-railway] marketplace trusted signing keys configured: $marketplace_key_count"
 fi
-echo "[paykit-railway] starting paykit-server (network $bitcoin_network, stack_role $PAYKIT_STACK_ROLE, poll_interval $electrum_poll_interval, electrum $electrum_host)"
+echo "[paykit-railway] starting paykit-server (image $image_digest, network $bitcoin_network, stack_role $PAYKIT_STACK_ROLE, poll_interval $electrum_poll_interval, electrum $electrum_host)"
 if [ "${PAYKIT_ENTRYPOINT_RENDER_ONLY:-0}" = "1" ]; then
   echo "[paykit-railway] PAYKIT_ENTRYPOINT_RENDER_ONLY=1: wrote $config_path, not starting server"
   exit 0
