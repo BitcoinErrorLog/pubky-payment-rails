@@ -6,9 +6,10 @@
 # keys derived from random one-off seeds with
 # ../tools/derive-marketplace-pubkey (the seeds were discarded immediately;
 # these public keys identify nothing). Every successfully rendered config is
-# parsed with python3's tomllib (Python >= 3.11), and the rendered keys are
-# validated against the REAL fork parser contract (see the P3 section at the
-# bottom).
+# parsed with python3's tomllib (Python >= 3.11), and the final section feeds
+# the rendered file to the REAL fork parser via `paykit-server
+# --check-config` (see test 6; requires PAYKIT_FORK_DIR to name a
+# deploy-target fork checkout that has the flag).
 set -u
 
 cd "$(dirname "$0")"
@@ -193,36 +194,49 @@ else
   not_ok "neither variable set emits no [marketplace] section"
 fi
 
-# 6 (P3). Rendered-key contract against the REAL fork parser. The fork
-# binary has no --check-config flag and this session cannot add an env-path
-# TOML loader test to the fork, so the proof is two-part:
-#   (a) local: every key the entrypoint renders matches
-#       ^pubky[ybndrfg8ejkmcpqxot1uwisza345h769]{52}$ - the only form the
-#       fork parser accepts;
-#   (b) fork: re-run the fork's own parser contract test
-#       (marketplace_config_trusted_public_key_accepts_prefixed_and_rejects_bare_forms,
-#       fork commit 37ffdd4) which proves that exact form PARSES and the bare
-#       52-char form is REJECTED by Config::from_toml_and_environment.
-FORK_DIR="${PAYKIT_SERVER_FORK_DIR:-/Users/johncarvalho/work/paykit-server-fork}"
-if run_render "$TMP/out" "$TMP/err" MARKETPLACE_TRUSTED_PUBLIC_KEYS="$KEY_A, $KEY_B" \
+# 6 (P1). Rendered-config contract against the REAL fork parser: the exact
+# TOML the entrypoint renders is fed to the deploy-target fork's own
+# `paykit-server --check-config <path>` (parse + validate config, no DB;
+# exit 0, or non-zero with the refusal line). There is deliberately NO
+# fallback that passes without the real parser.
+#
+# The deploy target is the fork's marketplace mainnet-hardening line (see
+# infra/README.md "Deploy-target fork"): its RawConfig parses
+# [deployment] stack_role and bitcoin.creation_enabled under
+# deny_unknown_fields. `--check-config` lands in a parallel slice; UNTIL THE
+# FLAG LANDS IN THE CHECKOUT PAYKIT_FORK_DIR POINTS AT, THIS TEST FAILS -
+# that is correct and expected.
+#
+# PAYKIT_FORK_DIR is mandatory: unset, or a checkout whose
+# paykit-server/src/config.rs lacks stack_role (i.e. not the hardening
+# line), is a loud FAILURE, never a skip.
+FORK_DIR="${PAYKIT_FORK_DIR:-}"
+if [ -z "$FORK_DIR" ]; then
+  not_ok "fork parser contract: PAYKIT_FORK_DIR is unset (point it at a deploy-target fork checkout that has --check-config)"
+elif [ ! -f "$FORK_DIR/paykit-server/src/config.rs" ] \
+  || ! grep -q "stack_role" "$FORK_DIR/paykit-server/src/config.rs"; then
+  not_ok "fork parser contract: $FORK_DIR is not the deploy-target fork (no paykit-server/src/config.rs containing stack_role)"
+elif run_render "$TMP/out" "$TMP/err" MARKETPLACE_TRUSTED_PUBLIC_KEYS="$KEY_A, $KEY_B" \
   && toml_parses \
   && rendered_keys_match_parser_form; then
-  ok "rendered marketplace keys match ^pubky[z-base-32]{52}\$ (parser-accepted form)"
-else
-  not_ok "rendered marketplace keys match ^pubky[z-base-32]{52}\$ (parser-accepted form)"
-fi
-
-if [ -f "$FORK_DIR/Cargo.toml" ]; then
-  if cargo test -q -p paykit-server --manifest-path "$FORK_DIR/Cargo.toml" \
-      --test config marketplace_config >"$TMP/forktest.log" 2>&1; then
-    ok "fork parser contract test passes (prefixed parses, bare rejected; $FORK_DIR)"
+  # Config::from_toml_and_environment also reads PAYKIT_DATABASE_URL /
+  # PAYKIT_MASTER_KEY; give it valid-format throwaway values (43-char
+  # unpadded base64url master key). The flag contract takes the rendered
+  # path as an argument; PAYKIT_CONFIG is intentionally NOT set. (`--bin
+  # paykit-server` only disambiguates cargo's multi-binary package; the
+  # binary-level contract is exactly `paykit-server --check-config <path>`.)
+  if (cd "$FORK_DIR" && \
+      PAYKIT_DATABASE_URL="postgres://check-config.invalid/unused" \
+      PAYKIT_MASTER_KEY="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" \
+      cargo run -q --locked -p paykit-server --bin paykit-server -- --check-config "$TMP/config.toml") \
+      >"$TMP/checkconfig.log" 2>&1; then
+    ok "rendered config parses through the real fork parser (--check-config; $FORK_DIR)"
   else
-    not_ok "fork parser contract test passes (prefixed parses, bare rejected; $FORK_DIR)"
-    cat "$TMP/forktest.log" >&2
+    not_ok "rendered config parses through the real fork parser (--check-config; $FORK_DIR)"
+    sed 's/^/  check-config: /' "$TMP/checkconfig.log" >&2
   fi
 else
-  echo "SKIP - fork parser validation: no fork checkout at $FORK_DIR"
-  echo "       (set PAYKIT_SERVER_FORK_DIR; full parse-forms proof lives in fork commit 37ffdd4)"
+  not_ok "rendered config parses through the real fork parser (--check-config; render or local key-form check failed)"
 fi
 
 # 7. Network, cadence, deployment role, and creation flags render with the
