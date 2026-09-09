@@ -11,8 +11,8 @@
 #   - [paykit] network = "mainnet": the Paykit SDK resolves identities via the
 #     default public pkarr relays, which the official staging Pubky network
 #     publishes to, so staging app users can be creators/readers.
-#   - [bitcoin] network = "regtest" and [electrum] points at the private
-#     Fulcrum endpoint. REGTEST ONLY.
+#   - [bitcoin] network and [electrum] cadence are selected from environment,
+#     with regtest and 1s defaults for byte-identical existing deployments.
 set -eu
 
 : "${PAYKIT_TRUSTED_LOCKS_PUBLIC_KEY:?PAYKIT_TRUSTED_LOCKS_PUBLIC_KEY is required}"
@@ -22,6 +22,65 @@ set -eu
 
 electrum_endpoint="${PAYKIT_ELECTRUM_ENDPOINT:-tcp://fulcrum.railway.internal:50001}"
 listen_addr="${PAYKIT_LISTEN_ADDR:-[::]:3001}"
+bitcoin_network="${PAYKIT_BITCOIN_NETWORK:-regtest}"
+electrum_poll_interval="${PAYKIT_ELECTRUM_POLL_INTERVAL:-1s}"
+
+case "$bitcoin_network" in
+  mainnet|testnet|signet|regtest) ;;
+  *)
+    echo "[paykit-railway] PAYKIT_BITCOIN_NETWORK must be one of mainnet|testnet|signet|regtest (got '$bitcoin_network')" >&2
+    exit 1
+    ;;
+esac
+
+if ! printf '%s\n' "$electrum_poll_interval" | awk '/^[0-9]+(ms|s|m)$/ { found = 1 } END { exit !found }'; then
+  echo "[paykit-railway] PAYKIT_ELECTRUM_POLL_INTERVAL must match ^[0-9]+(ms|s|m)$ (got '$electrum_poll_interval')" >&2
+  exit 1
+fi
+
+if [ "$bitcoin_network" != "regtest" ] && ! printf '%s\n' "$electrum_poll_interval" | awk '
+  {
+    unit = substr($0, length($0), 1)
+    number = substr($0, 1, length($0) - (unit == "s" ? 1 : (unit == "m" ? 1 : 2))) + 0
+    seconds = unit == "m" ? number * 60 : (unit == "s" ? number : number / 1000)
+  }
+  END { exit !(seconds >= 30) }
+'; then
+  echo "[paykit-railway] PAYKIT_ELECTRUM_POLL_INTERVAL must be at least 30s when PAYKIT_BITCOIN_NETWORK is not regtest (got '$electrum_poll_interval')" >&2
+  exit 1
+fi
+
+stack_role_line=""
+if [ -n "${PAYKIT_STACK_ROLE:-}" ]; then
+  case "$PAYKIT_STACK_ROLE" in
+    production|proof) ;;
+    *)
+      echo "[paykit-railway] PAYKIT_STACK_ROLE must be one of production|proof (got '$PAYKIT_STACK_ROLE')" >&2
+      exit 1
+      ;;
+  esac
+  stack_role_line="[deployment]
+stack_role = \"$PAYKIT_STACK_ROLE\"
+"
+elif [ "$bitcoin_network" = "mainnet" ]; then
+  echo "[paykit-railway] PAYKIT_STACK_ROLE is required when PAYKIT_BITCOIN_NETWORK is mainnet" >&2
+  exit 1
+fi
+
+creation_enabled_line=""
+if [ -n "${PAYKIT_BITCOIN_CREATION_ENABLED:-}" ]; then
+  case "$PAYKIT_BITCOIN_CREATION_ENABLED" in
+    true|false) ;;
+    *)
+      echo "[paykit-railway] PAYKIT_BITCOIN_CREATION_ENABLED must be one of true|false (got '$PAYKIT_BITCOIN_CREATION_ENABLED')" >&2
+      exit 1
+      ;;
+  esac
+  creation_enabled_line="creation_enabled = $PAYKIT_BITCOIN_CREATION_ENABLED"
+fi
+
+electrum_host="${electrum_endpoint#*://}"
+electrum_host="${electrum_host##*@}"
 
 # Optional marketplace transaction-service trust anchors: when set, requests
 # signed by any of these keys are accepted on the signed business routes
@@ -147,20 +206,31 @@ network = "mainnet"
 $auth_relay_line
 
 [bitcoin]
-network = "regtest"
+network = "$bitcoin_network"
+EOF
 
+if [ -n "$creation_enabled_line" ]; then
+  printf '%s\n' "$creation_enabled_line" >> "$config_path"
+fi
+
+printf '\n' >> "$config_path"
+cat >> "$config_path" <<EOF
 [electrum]
 endpoint = "$electrum_endpoint"
-poll_interval = "1s"
+poll_interval = "$electrum_poll_interval"
 
 [outbox]
 poll_interval = "500ms"
 EOF
 
+if [ -n "$stack_role_line" ]; then
+  printf '%s' "$stack_role_line" >> "$config_path"
+fi
+
 if [ "$marketplace_key_count" -gt 0 ]; then
   echo "[paykit-railway] marketplace trusted signing keys configured: $marketplace_key_count"
 fi
-echo "[paykit-railway] starting paykit-server (trusted locks key $PAYKIT_TRUSTED_LOCKS_PUBLIC_KEY, electrum $electrum_endpoint)"
+echo "[paykit-railway] starting paykit-server (network $bitcoin_network, stack_role ${PAYKIT_STACK_ROLE:-unset}, poll_interval $electrum_poll_interval, electrum $electrum_host)"
 if [ "${PAYKIT_ENTRYPOINT_RENDER_ONLY:-0}" = "1" ]; then
   echo "[paykit-railway] PAYKIT_ENTRYPOINT_RENDER_ONLY=1: wrote $config_path, not starting server"
   exit 0

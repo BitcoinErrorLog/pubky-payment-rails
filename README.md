@@ -9,9 +9,7 @@ This is the hosted version of the locally verified `payments-env` composed
 Docker environment. Every component is pinned to the exact revision /
 image digest that passed the full end-to-end payment verification there.
 
-**REGTEST ONLY.** Nothing in this repo may ever be configured for Bitcoin
-mainnet. The Pubky side, by contrast, deliberately runs against the real
-(mainnet) Pubky DHT/relays - see "Identity network" below.
+This repo deploys Bitcoin networks side by side: regtest for development, mainnet for the live marketplace rail. The mainnet stacks are **watch-only**: no component here may hold a Bitcoin private key, seed, mnemonic, or a descriptor containing private material. paykit-server persists account xpubs and derives with `Secp256k1::verification_only()`; any change that gives it the ability to sign must be refused. A mainnet service may only use a first-party Electrum endpoint; a third-party endpoint, or sharing a database between networks or stack roles, requires owner sign-off and a Kimi audit.
 
 ## Identity network: official staging Pubky network, not a private testnet
 
@@ -132,6 +130,14 @@ IPv6 wildcard.
   `/setup` page AND the CORS allow-list of the browser-called manual claim
   route `POST /v0/accounts/claim` (the Vercel app origin).
 - `PAYKIT_ELECTRUM_ENDPOINT` (default `tcp://fulcrum.railway.internal:50001`)
+- `PAYKIT_BITCOIN_NETWORK` (default `regtest`) - one of `mainnet`, `testnet`,
+  `signet`, or `regtest`.
+- `PAYKIT_ELECTRUM_POLL_INTERVAL` (default `1s`) - interval matching
+  `[0-9]+(ms|s|m)`; non-regtest networks require at least `30s`.
+- `PAYKIT_STACK_ROLE` (unset by default) - optional `production` or `proof`
+  deployment role; required for `mainnet`.
+- `PAYKIT_BITCOIN_CREATION_ENABLED` (unset by default) - optional TOML boolean
+  `true` or `false` controlling Bitcoin creation.
 - `MARKETPLACE_TRUSTED_PUBLIC_KEY` (optional) - `pubky<z-base32>` public key
   of the marketplace transaction service's request-signing keypair. When set,
   `x-paykit-signature` request signatures by this key are accepted on the

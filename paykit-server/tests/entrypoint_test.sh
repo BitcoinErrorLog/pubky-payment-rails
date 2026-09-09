@@ -38,6 +38,7 @@ not_ok() { fail=$((fail + 1)); echo "FAIL - $1"; }
 # variables get dummy non-secret values. Usage: run_render out err [env...]
 run_render() {
   out="$1"; err="$2"; shift 2
+  rm -f "$TMP/config.toml"
   env -i PATH="$PATH" \
     PAYKIT_TRUSTED_LOCKS_PUBLIC_KEY="$KEY_L" \
     PAYKIT_DATABASE_URL="postgres://dummy/dummy" \
@@ -221,6 +222,65 @@ if [ -f "$FORK_DIR/Cargo.toml" ]; then
 else
   echo "SKIP - fork parser validation: no fork checkout at $FORK_DIR"
   echo "       (set PAYKIT_SERVER_FORK_DIR; full parse-forms proof lives in fork commit 37ffdd4)"
+fi
+
+# 7. Network, cadence, deployment role, and creation flags render only when
+# configured; the default render remains the existing regtest shape.
+if run_render "$TMP/out" "$TMP/err" \
+  && grep -q '^network = "regtest"$' "$TMP/config.toml" \
+  && grep -q '^poll_interval = "1s"$' "$TMP/config.toml" \
+  && ! grep -q '^\[deployment\]$' "$TMP/config.toml" \
+  && ! grep -q '^creation_enabled = ' "$TMP/config.toml"; then
+  ok "unset network options preserve regtest defaults"
+else
+  not_ok "unset network options preserve regtest defaults"
+fi
+
+# 8. Mainnet requires a role and a safe cadence, and renders optional keys
+# into their intended TOML tables.
+if run_render "$TMP/out" "$TMP/err" \
+  PAYKIT_BITCOIN_NETWORK=mainnet \
+  PAYKIT_STACK_ROLE=proof \
+  PAYKIT_ELECTRUM_POLL_INTERVAL=30s \
+  PAYKIT_BITCOIN_CREATION_ENABLED=false \
+  PAYKIT_ELECTRUM_ENDPOINT='tcp://user:password@electrum.example:50001' \
+  && grep -q '^network = "mainnet"$' "$TMP/config.toml" \
+  && grep -q '^poll_interval = "30s"$' "$TMP/config.toml" \
+  && grep -q '^\[deployment\]$' "$TMP/config.toml" \
+  && grep -q '^stack_role = "proof"$' "$TMP/config.toml" \
+  && grep -q '^creation_enabled = false$' "$TMP/config.toml" \
+  && grep -q 'electrum electrum.example:50001)' "$TMP/out" \
+  && ! grep -q 'password' "$TMP/out"; then
+  ok "mainnet options render with safe endpoint logging"
+else
+  not_ok "mainnet options render with safe endpoint logging"
+fi
+
+# 9. All fail-closed validations happen before the config is written.
+if run_render "$TMP/out" "$TMP/err" PAYKIT_BITCOIN_NETWORK=foo \
+  || [ -e "$TMP/config.toml" ] \
+  || ! grep -q "\[paykit-railway\] PAYKIT_BITCOIN_NETWORK must be one of mainnet|testnet|signet|regtest (got 'foo')" "$TMP/err"; then
+  not_ok "invalid bitcoin network fails before writing config"
+else
+  ok "invalid bitcoin network fails before writing config"
+fi
+
+if run_render "$TMP/out" "$TMP/err" PAYKIT_BITCOIN_NETWORK=mainnet \
+  PAYKIT_ELECTRUM_POLL_INTERVAL=30s \
+  || [ -e "$TMP/config.toml" ] \
+  || ! grep -q "PAYKIT_STACK_ROLE is required" "$TMP/err"; then
+  not_ok "mainnet without stack role fails before writing config"
+else
+  ok "mainnet without stack role fails before writing config"
+fi
+
+if run_render "$TMP/out" "$TMP/err" PAYKIT_BITCOIN_NETWORK=mainnet \
+  PAYKIT_STACK_ROLE=production PAYKIT_ELECTRUM_POLL_INTERVAL=1s \
+  || [ -e "$TMP/config.toml" ] \
+  || ! grep -q "PAYKIT_ELECTRUM_POLL_INTERVAL must be at least 30s" "$TMP/err"; then
+  not_ok "mainnet with one-second cadence fails before writing config"
+else
+  ok "mainnet with one-second cadence fails before writing config"
 fi
 
 echo
