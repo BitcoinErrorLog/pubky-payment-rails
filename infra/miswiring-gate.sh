@@ -43,9 +43,14 @@
 #   export PAYKIT_TRUSTED_LOCKS_PUBLIC_KEY=pubky...   # the stack's real value
 #   export PAYKIT_SETUP_ALLOWED_ORIGINS="https://..."  # the stack's real value
 #   export PAYKIT_MASTER_KEY=<the stack's real value>  # see note below
-#   GATE_DATABASE_URL=<the WRONG database's URL, from `railway variables --kv`
-#                      on that database's service> \
-#     infra/miswiring-gate.sh --role <proof|production>
+#   export GATE_DATABASE_URL="$(railway variables --kv \
+#     | sed -n 's/^DATABASE_URL=//p')"   # the WRONG database's service selected
+#   infra/miswiring-gate.sh --role <proof|production>
+#
+# GATE_DATABASE_URL is exported on its own line, NEVER given as an env-prefix
+# inline assignment (`GATE_DATABASE_URL=... command`): the inline form is
+# part of the typed command line, so the URL - credentials and all - lands
+# verbatim in the operator's interactive shell history file.
 #
 # Use the stack's REAL variables (export them from `railway variables`, never
 # paste them into the command line) so the ONLY mismatched invariant is the
@@ -80,7 +85,7 @@ while [ $# -gt 0 ]; do
 done
 case "$role" in
   proof|production) ;;
-  *) die "usage: GATE_DATABASE_URL=... miswiring-gate.sh --role <proof|production>" ;;
+  *) die "usage: miswiring-gate.sh --role <proof|production> (export GATE_DATABASE_URL first - never the inline env-prefix form; it lands in shell history)" ;;
 esac
 
 [ -n "${GATE_DATABASE_URL:-}" ] || die "GATE_DATABASE_URL is required (the WRONG database's URL; never printed)"

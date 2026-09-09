@@ -73,10 +73,14 @@ not exist while the proof stack is being built.
 4. **Run the miswiring gate (proof).** Point the proof config at the existing
    **regtest** database and assert refusal:
    ```sh
-   # export the proof stack's real variables from Railway (never on a command line)
-   GATE_DATABASE_URL=<DATABASE_URL of the regtest paykit-postgres> \
-     infra/miswiring-gate.sh --role proof
+   # select the regtest paykit-postgres service, then export its URL
+   export GATE_DATABASE_URL="$(railway variables --kv | sed -n 's/^DATABASE_URL=//p')"
+   infra/miswiring-gate.sh --role proof
    ```
+   Never use the env-prefix inline form (`GATE_DATABASE_URL=... command`): an
+   inline assignment is part of the typed line, so the URL — credentials and
+   all — is recorded verbatim in your interactive shell history; `export` on
+   its own line (or `read -r` from a prompt) keeps it out.
    Expected: `PASS - ... refused to boot ... StartupError::Deployment`.
    See the script header for exactly what is asserted and why.
 5. **Run the §D proofs** (MAINNET-NEG, MAINNET-DERIVE, staging Shop) on the
@@ -94,8 +98,13 @@ not exist while the proof stack is being built.
    manual gate), redeploy, and check the boot line shows
    `stack_role production` and digest `== D`.
 7. **Run the miswiring gate (production):** production config against the
-   **proof** database (`GATE_DATABASE_URL` of `paykit-proof-postgres`,
-   `--role production`) — must refuse with `StartupError::Deployment`.
+   **proof** database — select the `paykit-proof-postgres` service, then:
+   ```sh
+   export GATE_DATABASE_URL="$(railway variables --kv | sed -n 's/^DATABASE_URL=//p')"
+   infra/miswiring-gate.sh --role production
+   ```
+   (Same shell-history rule as step 4: export, never the inline env-prefix
+   form.) Must refuse with `StartupError::Deployment`.
 8. **Cut over** per §C.18 (owner sign-off gate): production Shop origin into
    `PAYKIT_SETUP_ALLOWED_ORIGINS`, `PAYKIT_SERVER_URL` on production
    `marketplace-service`, `PUBKY_RUNTIME_PAYKIT_SETUP_URL` on Vercel,
