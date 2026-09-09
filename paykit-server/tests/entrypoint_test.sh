@@ -185,6 +185,20 @@ else
   not_ok "whitespace-padded MARKETPLACE_TRUSTED_PUBLIC_KEYS still accepts 2 keys"
 fi
 
+# 4f (audit P3). A list entry equal to the OLD sentinel string
+# (`__paykit_trusted_keys_end__`) used to terminate the parse loop early and
+# SILENTLY drop every later entry. With the sentinel removed, the value is
+# just an entry: it fails key validation loudly and no config is written.
+if run_render "$TMP/out" "$TMP/err" MARKETPLACE_TRUSTED_PUBLIC_KEYS="$KEY_A,__paykit_trusted_keys_end__,$KEY_B"; then
+  not_ok "old sentinel string as a list entry fails loudly (no silent truncation)"
+elif [ -e "$TMP/config.toml" ] \
+  || ! grep -q "entry 2 is not a 57-character" "$TMP/err" \
+  || grep -q "$KEY_A" "$TMP/err" || grep -q "$KEY_B" "$TMP/err"; then
+  not_ok "old sentinel string as a list entry fails loudly (no silent truncation)"
+else
+  ok "old sentinel string as a list entry fails loudly (no silent truncation)"
+fi
+
 # 5. Neither set: no [marketplace] section, config still parses.
 if run_render "$TMP/out" "$TMP/err" \
   && ! grep -q "\[marketplace\]" "$TMP/config.toml" \

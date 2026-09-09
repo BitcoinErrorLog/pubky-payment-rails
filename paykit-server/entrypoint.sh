@@ -189,16 +189,20 @@ elif [ -n "${MARKETPLACE_TRUSTED_PUBLIC_KEYS:-}" ]; then
   # Empty entries (double/leading/trailing commas, whitespace-only entries)
   # fail fast with their 1-based entry index - never the value - instead of
   # being silently skipped: a skipped entry would boot the server with fewer
-  # trust anchors than the operator configured. The sentinel appended after
-  # the final comma keeps a trailing comma visible as an empty last entry
-  # (command substitution strips trailing newlines, which would hide it).
+  # trust anchors than the operator configured. A trailing comma is caught
+  # STRUCTURALLY before the loop (command substitution strips trailing
+  # newlines, which would hide the empty final entry); no sentinel value is
+  # used anywhere, so no key material can ever collide with one.
+  case "$MARKETPLACE_TRUSTED_PUBLIC_KEYS" in
+    *,)
+      empty_entry_index=$(( $(printf '%s' "$MARKETPLACE_TRUSTED_PUBLIC_KEYS" | tr -cd ',' | wc -c) + 1 ))
+      echo "[paykit-railway] error: MARKETPLACE_TRUSTED_PUBLIC_KEYS entry $empty_entry_index is empty; remove empty entries from the comma-separated list" >&2
+      exit 1
+      ;;
+  esac
   entry_index=0
-  keys_end_sentinel="__paykit_trusted_keys_end__"
   set -f
   while IFS= read -r key || [ -n "$key" ]; do
-    if [ "$key" = "$keys_end_sentinel" ]; then
-      break
-    fi
     entry_index=$((entry_index + 1))
     key="$(printf '%s' "$key" | tr -d '[:space:]')"
     if [ -z "$key" ]; then
@@ -216,7 +220,7 @@ elif [ -n "${MARKETPLACE_TRUSTED_PUBLIC_KEYS:-}" ]; then
       marketplace_keys_toml="$marketplace_keys_toml, \"$key\""
     fi
   done <<EOF_KEYS
-$(printf '%s,%s' "$MARKETPLACE_TRUSTED_PUBLIC_KEYS" "$keys_end_sentinel" | tr ',' '\n')
+$(printf '%s' "$MARKETPLACE_TRUSTED_PUBLIC_KEYS" | tr ',' '\n')
 EOF_KEYS
   set +f
   if [ "$marketplace_key_count" -eq 0 ]; then
