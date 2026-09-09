@@ -13,12 +13,19 @@
 #     publishes to, so staging app users can be creators/readers.
 #   - [bitcoin] network and [electrum] cadence are selected from environment,
 #     with regtest and 1s defaults for byte-identical existing deployments.
+#   - [deployment] stack_role is required on every network and must be
+#     production or proof.
 set -eu
 
 : "${PAYKIT_TRUSTED_LOCKS_PUBLIC_KEY:?PAYKIT_TRUSTED_LOCKS_PUBLIC_KEY is required}"
 : "${PAYKIT_DATABASE_URL:?PAYKIT_DATABASE_URL is required}"
 : "${PAYKIT_MASTER_KEY:?PAYKIT_MASTER_KEY is required}"
 : "${PAYKIT_SETUP_ALLOWED_ORIGINS:?PAYKIT_SETUP_ALLOWED_ORIGINS is required (comma-separated origins)}"
+
+if [ -z "${PAYKIT_STACK_ROLE:-}" ]; then
+  echo "[paykit-railway] PAYKIT_STACK_ROLE is required (production|proof)" >&2
+  exit 1
+fi
 
 electrum_endpoint="${PAYKIT_ELECTRUM_ENDPOINT:-tcp://fulcrum.railway.internal:50001}"
 listen_addr="${PAYKIT_LISTEN_ADDR:-[::]:3001}"
@@ -51,21 +58,16 @@ if [ "$bitcoin_network" != "regtest" ] && ! printf '%s\n' "$electrum_poll_interv
 fi
 
 stack_role_line=""
-if [ -n "${PAYKIT_STACK_ROLE:-}" ]; then
-  case "$PAYKIT_STACK_ROLE" in
-    production|proof) ;;
-    *)
-      echo "[paykit-railway] PAYKIT_STACK_ROLE must be one of production|proof (got '$PAYKIT_STACK_ROLE')" >&2
-      exit 1
-      ;;
-  esac
-  stack_role_line="[deployment]
+case "$PAYKIT_STACK_ROLE" in
+  production|proof) ;;
+  *)
+    echo "[paykit-railway] PAYKIT_STACK_ROLE must be one of production|proof (got '$PAYKIT_STACK_ROLE')" >&2
+    exit 1
+    ;;
+esac
+stack_role_line="[deployment]
 stack_role = \"$PAYKIT_STACK_ROLE\"
 "
-elif [ "$bitcoin_network" = "mainnet" ]; then
-  echo "[paykit-railway] PAYKIT_STACK_ROLE is required when PAYKIT_BITCOIN_NETWORK is mainnet" >&2
-  exit 1
-fi
 
 creation_enabled_line=""
 if [ -n "${PAYKIT_BITCOIN_CREATION_ENABLED:-}" ]; then
@@ -223,14 +225,12 @@ poll_interval = "$electrum_poll_interval"
 poll_interval = "500ms"
 EOF
 
-if [ -n "$stack_role_line" ]; then
-  printf '%s' "$stack_role_line" >> "$config_path"
-fi
+printf '%s' "$stack_role_line" >> "$config_path"
 
 if [ "$marketplace_key_count" -gt 0 ]; then
   echo "[paykit-railway] marketplace trusted signing keys configured: $marketplace_key_count"
 fi
-echo "[paykit-railway] starting paykit-server (network $bitcoin_network, stack_role ${PAYKIT_STACK_ROLE:-unset}, poll_interval $electrum_poll_interval, electrum $electrum_host)"
+echo "[paykit-railway] starting paykit-server (network $bitcoin_network, stack_role $PAYKIT_STACK_ROLE, poll_interval $electrum_poll_interval, electrum $electrum_host)"
 if [ "${PAYKIT_ENTRYPOINT_RENDER_ONLY:-0}" = "1" ]; then
   echo "[paykit-railway] PAYKIT_ENTRYPOINT_RENDER_ONLY=1: wrote $config_path, not starting server"
   exit 0

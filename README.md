@@ -134,8 +134,10 @@ IPv6 wildcard.
   `signet`, or `regtest`.
 - `PAYKIT_ELECTRUM_POLL_INTERVAL` (default `1s`) - interval matching
   `[0-9]+(ms|s|m)`; non-regtest networks require at least `30s`.
-- `PAYKIT_STACK_ROLE` (unset by default) - optional `production` or `proof`
-  deployment role; required for `mainnet`.
+- `PAYKIT_STACK_ROLE` - required on every network; must be `production` or
+  `proof`. Set `PAYKIT_STACK_ROLE=proof` on the existing regtest service before
+  pinning paykit-server >= c862005; the server adopts the role once and refuses
+  later mismatches.
 - `PAYKIT_BITCOIN_CREATION_ENABLED` (unset by default) - optional TOML boolean
   `true` or `false` controlling Bitcoin creation.
 - `MARKETPLACE_TRUSTED_PUBLIC_KEY` (optional) - `pubky<z-base32>` public key

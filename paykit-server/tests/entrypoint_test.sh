@@ -44,6 +44,7 @@ run_render() {
     PAYKIT_DATABASE_URL="postgres://dummy/dummy" \
     PAYKIT_MASTER_KEY="dummy" \
     PAYKIT_SETUP_ALLOWED_ORIGINS="https://example.invalid" \
+    PAYKIT_STACK_ROLE=proof \
     PAYKIT_CONFIG="$TMP/config.toml" \
     PAYKIT_ENTRYPOINT_RENDER_ONLY=1 \
     "$@" sh "$ENTRYPOINT" >"$out" 2>"$err"
@@ -224,19 +225,31 @@ else
   echo "       (set PAYKIT_SERVER_FORK_DIR; full parse-forms proof lives in fork commit 37ffdd4)"
 fi
 
-# 7. Network, cadence, deployment role, and creation flags render only when
-# configured; the default render remains the existing regtest shape.
+# 7. Network, cadence, deployment role, and creation flags render with the
+# existing regtest defaults when the required role is configured.
 if run_render "$TMP/out" "$TMP/err" \
+  PAYKIT_STACK_ROLE=proof \
   && grep -q '^network = "regtest"$' "$TMP/config.toml" \
   && grep -q '^poll_interval = "1s"$' "$TMP/config.toml" \
-  && ! grep -q '^\[deployment\]$' "$TMP/config.toml" \
+  && grep -q '^\[deployment\]$' "$TMP/config.toml" \
+  && grep -q '^stack_role = "proof"$' "$TMP/config.toml" \
   && ! grep -q '^creation_enabled = ' "$TMP/config.toml"; then
-  ok "unset network options preserve regtest defaults"
+  ok "proof role preserves regtest defaults and renders deployment"
 else
-  not_ok "unset network options preserve regtest defaults"
+  not_ok "proof role preserves regtest defaults and renders deployment"
 fi
 
-# 8. Mainnet requires a role and a safe cadence, and renders optional keys
+# 8. Unset role fails on regtest before the config is written.
+if run_render "$TMP/out" "$TMP/err" \
+  PAYKIT_STACK_ROLE="" \
+  || [ -e "$TMP/config.toml" ] \
+  || ! grep -q "\[paykit-railway\] PAYKIT_STACK_ROLE is required (production|proof)" "$TMP/err"; then
+  not_ok "regtest without stack role fails before writing config"
+else
+  ok "regtest without stack role fails before writing config"
+fi
+
+# 9. Mainnet requires a role and a safe cadence, and renders optional keys
 # into their intended TOML tables.
 if run_render "$TMP/out" "$TMP/err" \
   PAYKIT_BITCOIN_NETWORK=mainnet \
@@ -256,7 +269,7 @@ else
   not_ok "mainnet options render with safe endpoint logging"
 fi
 
-# 9. All fail-closed validations happen before the config is written.
+# 10. All fail-closed validations happen before the config is written.
 if run_render "$TMP/out" "$TMP/err" PAYKIT_BITCOIN_NETWORK=foo \
   || [ -e "$TMP/config.toml" ] \
   || ! grep -q "\[paykit-railway\] PAYKIT_BITCOIN_NETWORK must be one of mainnet|testnet|signet|regtest (got 'foo')" "$TMP/err"; then
@@ -266,9 +279,10 @@ else
 fi
 
 if run_render "$TMP/out" "$TMP/err" PAYKIT_BITCOIN_NETWORK=mainnet \
+  PAYKIT_STACK_ROLE="" \
   PAYKIT_ELECTRUM_POLL_INTERVAL=30s \
   || [ -e "$TMP/config.toml" ] \
-  || ! grep -q "PAYKIT_STACK_ROLE is required" "$TMP/err"; then
+  || ! grep -q "PAYKIT_STACK_ROLE is required (production|proof)" "$TMP/err"; then
   not_ok "mainnet without stack role fails before writing config"
 else
   ok "mainnet without stack role fails before writing config"
