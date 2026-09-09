@@ -27,10 +27,18 @@
 #      PAYKIT_REQUEST_SIGNING_KEY ONLY IF ABSENT - never regenerates, never
 #      echoes, never writes them to a file: the value is piped on stdin
 #      directly into `railway variables set`, so it appears on no command
-#      line and in no log;
+#      line and in no log. If the installed CLI has no stdin form (the write
+#      does not land on readback) the script REFUSES - there is deliberately
+#      no argv fallback, because a generated key on a command line leaks into
+#      shell history, process tables, and logs; the runbook names the
+#      dashboard variable editor as the only alternative channel;
 #   5. refuses to run without --image-digest sha256:<64 hex> (§C.8: one
 #      pinned digest D across stacks; building "latest" per stack is the
-#      NEW-4 failure).
+#      NEW-4 failure). The digest is wired as PAYKIT_IMAGE_DIGEST only -
+#      this script PROVISIONS, it does NOT deploy or pin: pinning the
+#      service's deployment source to the digest is a mandatory manual gate
+#      (no verified CLI operation exists), printed as a checklist at the end
+#      of every run and blocking the miswiring gate until ticked.
 #
 # Usage:
 #   infra/create-stack.sh <proof|production> \
@@ -50,9 +58,9 @@
 #   railway status --json                railway add --database postgres --name <n>
 #   railway service <name>               railway variables --kv
 #   railway variables set KEY=VALUE      railway variables set KEY  (value on stdin)
-# Pinning the already-built digest D to the service has no confident CLI
-# spelling: do it in the Railway dashboard (service Settings -> Source ->
-# image digest) as the script's final printed step reminds you.
+# Pinning the already-built digest D to the service has no verified CLI
+# operation: it is a mandatory manual gate in the Railway dashboard (service
+# Settings -> Source -> image digest), printed as the final checklist.
 set -eu
 
 RAILWAY_BIN="${RAILWAY_BIN:-railway}"
@@ -172,20 +180,38 @@ gen_key() {
 
 for secret_key in PAYKIT_MASTER_KEY PAYKIT_REQUEST_SIGNING_KEY; do
   if [ -z "$(get_var "$secret_key")" ]; then
-    gen_key | "$RAILWAY_BIN" variables set "$secret_key" >/dev/null
+    secret_value="$(gen_key)"
+    printf '%s' "$secret_value" | "$RAILWAY_BIN" variables set "$secret_key" >/dev/null
+    # Readback verification: an installed CLI WITHOUT the stdin form of
+    # `variables set KEY` silently stores nothing (or prompts). Detect that
+    # here and REFUSE. There is deliberately no fallback that puts the key on
+    # a command line - that would leak it into shell history, process tables,
+    # and logs. The only alternative channel is the Railway dashboard
+    # variable editor (or another verified non-argv channel).
+    current_vars="$("$RAILWAY_BIN" variables --kv)"
+    [ "$(get_var "$secret_key")" = "$secret_value" ] \
+      || die "the installed Railway CLI did not store $secret_key from stdin (no 'railway variables set KEY' stdin form). STOP - do not work around this on a command line. Set $secret_key through Railway's dashboard variable editor (or another verified non-argv channel), then re-run this script; existing keys are never regenerated."
     echo "  generated $secret_key (piped to railway; value never displayed)"
   fi
 done
 
-# --- 5. Summary ------------------------------------------------------------
-echo "create-stack: $stack stack ensured."
+# --- 5. Provisioning summary + the mandatory manual pin gate ----------------
+# This script PROVISIONS (objects + variables). It does NOT deploy, and there
+# is no verified Railway CLI operation that pins a service's deployment
+# source to an image digest - so the pin is a mandatory MANUAL gate between
+# provisioning and the miswiring gate. Naming it honestly keeps an operator
+# from reading "image: <digest>" above as "deployed at <digest>".
+echo "create-stack: $stack stack PROVISIONED (objects and variables only - nothing deployed)."
 echo "  project:  $linked"
 echo "  service:  $service (role $role, network mainnet, electrum ssl://bitkit.to:9999, poll 30s)"
 echo "  database: $database (this stack only - never shared, never promoted)"
-echo "  image:    $image_digest"
+echo "  image:    $image_digest (wired as PAYKIT_IMAGE_DIGEST only; NOT yet pinned or deployed)"
 echo
-echo "OPERATOR ACTION (no confident CLI spelling - verify, then do it in the"
-echo "Railway dashboard): pin the $service deployment source to image digest"
-echo "  $image_digest"
-echo "and redeploy. The boot line must print this exact digest (§C.8); each"
-echo "proof asserts it equals D before running."
+echo "MANDATORY MANUAL GATE - deployment pin (no verified CLI operation exists)."
+echo "Provisioning is complete; the deployment pin is NOT. The miswiring gate"
+echo "and every later proof are BLOCKED until the operator ticks both boxes:"
+echo "  [ ] pin the $service deployment source to image digest"
+echo "        $image_digest"
+echo "      in the Railway dashboard (service Settings -> Source) and redeploy"
+echo "  [ ] verify the boot line prints 'image $image_digest' exactly (§C.8;"
+echo "      each proof asserts the digest it observed equals D before running)"

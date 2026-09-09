@@ -126,20 +126,56 @@ else
   not_ok "production stack targets project 75faa4fe with role production"
 fi
 
-# 8. The regtest service is never touched: no call names the existing stack.
+# 8. The regtest service is never touched: BOTH absence assertions must hold
+#    (a `||` here would let one forbidden call hide behind the other).
 if ! grep -q 'paykit-postgres' "$FAKE_RAILWAY_LOG" \
-  || ! grep -Eq '(add|down).*paykit-server$' "$FAKE_RAILWAY_LOG"; then
+  && ! grep -Eq '(add|down).*paykit-server$' "$FAKE_RAILWAY_LOG"; then
   ok "no call touches the existing regtest service or database"
 else
   not_ok "no call touches the existing regtest service or database"
 fi
 
-# 9. The final instruction pins the digest (operator dashboard step).
-if grep -q "pin the paykit-server-mainnet deployment source to image digest" "$TMP/out" \
-  && grep -q "$DIGEST" "$TMP/out"; then
-  ok "operator instruction pins the exact digest"
+# 8b. Mutation proof for assertion 8: a SINGLE forbidden regtest call must
+#     fail the conjunction. (Checked on a copy so the real log stays usable.)
+cp "$FAKE_RAILWAY_LOG" "$TMP/mutated.log"
+printf 'MUTATE railway down --service paykit-server\n' >> "$TMP/mutated.log"
+if ! grep -q 'paykit-postgres' "$TMP/mutated.log" \
+  && ! grep -Eq '(add|down).*paykit-server$' "$TMP/mutated.log"; then
+  not_ok "mutation proof: one forbidden regtest call fails the conjunction"
 else
-  not_ok "operator instruction pins the exact digest"
+  ok "mutation proof: one forbidden regtest call fails the conjunction"
+fi
+
+# 9. The final step is named honestly: provisioning is done, the deployment
+#    pin is a MANDATORY MANUAL GATE (no verified CLI operation), blocking the
+#    miswiring gate until the operator ticks the checklist.
+if grep -q "PROVISIONED (objects and variables only - nothing deployed)" "$TMP/out" \
+  && grep -q "MANDATORY MANUAL GATE - deployment pin" "$TMP/out" \
+  && grep -q "\[ \] pin the paykit-server-mainnet deployment source to image digest" "$TMP/out" \
+  && grep -q "$DIGEST" "$TMP/out" \
+  && grep -q "miswiring gate" "$TMP/out" && grep -q "BLOCKED" "$TMP/out"; then
+  ok "pin step is named as a mandatory manual gate with an operator checklist"
+else
+  not_ok "pin step is named as a mandatory manual gate with an operator checklist"
+fi
+
+# 10 (P1-4). A CLI without the stdin form of `variables set KEY` must be
+#     detected via readback and REFUSED - there is no argv fallback that
+#     would put the generated key on a command line.
+rm -rf "$FAKE_RAILWAY_STATE_DIR"
+: > "$FAKE_RAILWAY_LOG"
+if RAILWAY_BIN=./infra/tests/fake-railway-no-stdin.sh sh "$SCRIPT" proof \
+    --image-digest "$DIGEST" \
+    --locks-public-key "$KEY_L" \
+    --allowed-origins "https://shop.example" >"$TMP/out10" 2>"$TMP/err10"; then
+  not_ok "CLI without the stdin variables-set form is refused (no argv fallback)"
+elif grep -q "did not store PAYKIT_MASTER_KEY from stdin" "$TMP/err10" \
+  && grep -q "dashboard variable editor" "$TMP/err10" \
+  && ! grep -Eq 'variables set PAYKIT_(MASTER|REQUEST_SIGNING)_KEY=[^<]' "$FAKE_RAILWAY_LOG"; then
+  ok "CLI without the stdin variables-set form is refused (no argv fallback)"
+else
+  not_ok "CLI without the stdin variables-set form is refused (no argv fallback)"
+  sed 's/^/  out: /' "$TMP/out10"; sed 's/^/  err: /' "$TMP/err10"
 fi
 
 echo
