@@ -89,16 +89,31 @@ if ! printf '%s\n' "$electrum_poll_interval" | awk '/^[0-9]+(ms|s|m)$/ { found =
   exit 1
 fi
 
-if [ "$bitcoin_network" != "regtest" ] && ! printf '%s\n' "$electrum_poll_interval" | awk '
-  {
-    unit = substr($0, length($0), 1)
-    number = substr($0, 1, length($0) - (unit == "s" ? 1 : (unit == "m" ? 1 : 2))) + 0
-    seconds = unit == "m" ? number * 60 : (unit == "s" ? number : number / 1000)
-  }
-  END { exit !(seconds >= 30) }
-'; then
-  echo "[paykit-railway] PAYKIT_ELECTRUM_POLL_INTERVAL must be at least 30s when PAYKIT_BITCOIN_NETWORK is not regtest (got '$electrum_poll_interval')" >&2
-  exit 1
+# The >=30s floor for non-regtest networks: match the TWO-char "ms" suffix
+# BEFORE the one-char "s"/"m" suffixes (every "ms" value also ends in "s";
+# taking the last char only strips ONE character, coercing e.g. "30ms" to
+# 30 "seconds" and waving a 30ms cadence through the floor). Integer compare
+# per unit, no awk. The regex gate above guarantees ^[0-9]+(ms|s|m)$, so
+# poll_num is always a non-negative integer here.
+if [ "$bitcoin_network" != "regtest" ]; then
+  poll_floor_ok=1
+  case "$electrum_poll_interval" in
+    *ms)
+      poll_num=${electrum_poll_interval%ms}
+      [ "$poll_num" -ge 30000 ] || poll_floor_ok=0
+      ;;
+    *s)
+      poll_num=${electrum_poll_interval%s}
+      [ "$poll_num" -ge 30 ] || poll_floor_ok=0
+      ;;
+    *m)
+      # Any whole minute is >= 60s: always above the floor.
+      ;;
+  esac
+  if [ "$poll_floor_ok" -eq 0 ]; then
+    echo "[paykit-railway] PAYKIT_ELECTRUM_POLL_INTERVAL must be at least 30s when PAYKIT_BITCOIN_NETWORK is not regtest (got '$electrum_poll_interval')" >&2
+    exit 1
+  fi
 fi
 
 stack_role_line=""

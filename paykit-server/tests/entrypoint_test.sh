@@ -311,6 +311,53 @@ else
   ok "mainnet with one-second cadence fails before writing config"
 fi
 
+# 10b (audit P1). Every `ms` value used to bypass the >=30s floor: the old
+# awk read only the LAST character ("s"), stripped one char, and coerced
+# "30ms" to 30 "seconds" - passing the floor. Each ms value below the floor
+# must now refuse BEFORE the config file is written.
+for below in 30ms 29999ms; do
+  if run_render "$TMP/out" "$TMP/err" PAYKIT_BITCOIN_NETWORK=mainnet \
+    PAYKIT_STACK_ROLE=proof PAYKIT_ELECTRUM_POLL_INTERVAL="$below" \
+    || [ -e "$TMP/config.toml" ] \
+    || ! grep -q "PAYKIT_ELECTRUM_POLL_INTERVAL must be at least 30s when PAYKIT_BITCOIN_NETWORK is not regtest (got '$below')" "$TMP/err"; then
+    not_ok "mainnet with $below cadence fails before writing config"
+  else
+    ok "mainnet with $below cadence fails before writing config"
+  fi
+done
+
+# The audit's exact repro: 100ms on mainnet with the proof stack role must
+# refuse (it previously exited 0 and rendered poll_interval = "100ms").
+if run_render "$TMP/out" "$TMP/err" PAYKIT_BITCOIN_NETWORK=mainnet \
+  PAYKIT_STACK_ROLE=proof PAYKIT_ELECTRUM_POLL_INTERVAL=100ms \
+  || [ -e "$TMP/config.toml" ] \
+  || ! grep -q "PAYKIT_ELECTRUM_POLL_INTERVAL must be at least 30s" "$TMP/err"; then
+  not_ok "audit repro: mainnet/proof with 100ms cadence fails before writing config"
+else
+  ok "audit repro: mainnet/proof with 100ms cadence fails before writing config"
+fi
+
+# At and above the floor the ms/s/m forms are all accepted on mainnet.
+for accepted in 30000ms 30s 1m; do
+  if run_render "$TMP/out" "$TMP/err" PAYKIT_BITCOIN_NETWORK=mainnet \
+    PAYKIT_STACK_ROLE=proof PAYKIT_ELECTRUM_POLL_INTERVAL="$accepted" \
+    && grep -q "^poll_interval = \"$accepted\"$" "$TMP/config.toml" \
+    && toml_parses; then
+    ok "mainnet accepts $accepted cadence at/above the 30s floor"
+  else
+    not_ok "mainnet accepts $accepted cadence at/above the 30s floor"
+  fi
+done
+
+# Regtest keeps its exemption from the floor.
+if run_render "$TMP/out" "$TMP/err" PAYKIT_BITCOIN_NETWORK=regtest \
+  PAYKIT_ELECTRUM_POLL_INTERVAL=1s \
+  && grep -q '^poll_interval = "1s"$' "$TMP/config.toml"; then
+  ok "regtest still accepts 1s cadence"
+else
+  not_ok "regtest still accepts 1s cadence"
+fi
+
 # 11 (§C.8). The boot line prints the pinned image digest exactly once and
 # never any secret. PAYKIT_IMAGE_DIGEST (wired by infra/create-stack.sh from
 # the same --image-digest the service is pinned to) is the primary source;
