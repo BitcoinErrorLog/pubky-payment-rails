@@ -28,17 +28,21 @@ init_db regtest-db regtest proof
 init_db proof-db mainnet proof
 
 run_gate() {
-  # run_gate <role> <db> - output lands in $TMP/gate.out / $TMP/gate.err and
-  # is appended to $TMP/all.out / $TMP/all.err (for the never-printed checks).
+  # run_gate <role> <db> [timeout-seconds] [extra env KEY=VALUE ...] -
+  # output lands in $TMP/gate.out / $TMP/gate.err and is appended to
+  # $TMP/all.out / $TMP/all.err (for the never-printed checks).
+  role="$1"; db="$2"; timeout=5
+  if [ $# -ge 3 ]; then timeout="$3"; shift 3; else shift 2; fi
   env -i PATH="$PATH" HOME="$HOME" \
     FAKE_DB_DIR="$FAKE_DB_DIR" \
     PAYKIT_SERVER_BIN=./infra/tests/fake-paykit-server.sh \
-    GATE_TIMEOUT_SECONDS=5 \
+    GATE_TIMEOUT_SECONDS="$timeout" \
     PAYKIT_TRUSTED_LOCKS_PUBLIC_KEY="$KEY_L" \
     PAYKIT_SETUP_ALLOWED_ORIGINS="https://shop.example" \
     PAYKIT_MASTER_KEY="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" \
-    GATE_DATABASE_URL="postgres://fake.railway.internal:5432/$2" \
-    sh "$GATE" --role "$1" >"$TMP/gate.out" 2>"$TMP/gate.err"
+    GATE_DATABASE_URL="postgres://fake.railway.internal:5432/$db" \
+    ${1:+"$@"} \
+    sh "$GATE" --role "$role" >"$TMP/gate.out" 2>"$TMP/gate.err"
   code=$?
   cat "$TMP/gate.out" >> "$TMP/all.out"
   cat "$TMP/gate.err" >> "$TMP/all.err"
@@ -121,11 +125,49 @@ fi
 #    exact Deployment refusal is evidence.
 if run_gate proof no-such-db; then
   not_ok "connection failure is not accepted as a deployment refusal"
-elif grep -q "NOT StartupError::Deployment" "$TMP/gate.err"; then
+elif grep -q "NOT the exact" "$TMP/gate.err" \
+  && grep -q "StartupError::Deployment refusal line" "$TMP/gate.err"; then
   ok "connection failure is not accepted as a deployment refusal"
 else
   not_ok "connection failure is not accepted as a deployment refusal"
   sed 's/^/  err: /' "$TMP/gate.err"
+fi
+
+# 7 (P1-3). The marker phrase EMBEDDED in unrelated text must FAIL the gate:
+# the match is anchored to the fork's complete error line, so a substring
+# carrying "deployment initialization failed" proves nothing. (This exact
+# line passed the pre-fix substring grep.)
+if run_gate proof regtest-db 5 \
+    FAKE_SERVER_FORCE_STDERR='Error: connection refused; expected marker was deployment initialization failed but invariant was not evaluated'; then
+  not_ok "marker phrase embedded in unrelated text fails the gate"
+elif grep -q "NOT the exact" "$TMP/gate.err"; then
+  ok "marker phrase embedded in unrelated text fails the gate"
+else
+  not_ok "marker phrase embedded in unrelated text fails the gate"
+  sed 's/^/  err: /' "$TMP/gate.err"
+fi
+
+# 8 (P1-3). Even the EXACT refusal line is void when a connection-failure
+# signature is also present: the boot never evaluated the invariant.
+if run_gate proof regtest-db 5 \
+    FAKE_SERVER_FORCE_STDERR="$(printf 'Error: deployment initialization failed\nError: postgres connection failed')"; then
+  not_ok "connection-failure signature on stderr voids the refusal line"
+elif grep -q "StartupError::Connection" "$TMP/gate.err"; then
+  ok "connection-failure signature on stderr voids the refusal line"
+else
+  not_ok "connection-failure signature on stderr voids the refusal line"
+  sed 's/^/  err: /' "$TMP/gate.err"
+fi
+
+# 9 (P2-1). A refusal landing AFTER the loop's last liveness check but BEFORE
+# the window closes (delay 2.5s, timeout 3s) must be reaped and judged on its
+# exit code - not misclassified as STILL RUNNING.
+if run_gate proof regtest-db 3 FAKE_SERVER_DELAY_SECONDS=2.5 \
+  && grep -q "PASS - mainnet/proof config refused to boot" "$TMP/gate.out"; then
+  ok "a refusal landing between the last liveness check and the timeout is reaped, not misclassified"
+else
+  not_ok "a refusal landing between the last liveness check and the timeout is reaped, not misclassified"
+  sed 's/^/  out: /' "$TMP/gate.out"; sed 's/^/  err: /' "$TMP/gate.err"
 fi
 
 echo

@@ -139,6 +139,52 @@ else
   not_ok "refuses when paykit-proof-postgres is absent from the project"
 fi
 
+# 9. Self-attack 1, operator-env variant: PAYKIT_PROOF_PROJECT_ID (any value,
+#    here the PRODUCTION id) has NO effect - the script is driven by the
+#    immutable literal only, links the literal, and never even logs the
+#    override value.
+reset_state
+if run_drop PAYKIT_PROOF_DROP_CONFIRM=c991d768 PAYKIT_PROOF_PROJECT_ID=75faa4fe \
+  && grep -q '^LOCAL railway link --project c991d768$' "$FAKE_RAILWAY_LOG" \
+  && ! grep -q '75faa4fe' "$FAKE_RAILWAY_LOG" \
+  && grep -q "DRY RUN - NO ACTION TAKEN" "$TMP/out" \
+  && [ "$(mutate_count)" -eq 0 ]; then
+  ok "PAYKIT_PROOF_PROJECT_ID override is ignored; the immutable literal drives every check"
+else
+  not_ok "PAYKIT_PROOF_PROJECT_ID override is ignored; the immutable literal drives every check"
+  sed 's/^/  out: /' "$TMP/out"; sed 's/^/  err: /' "$TMP/err"
+  sed 's/^/  log: /' "$FAKE_RAILWAY_LOG"
+fi
+
+# 10. Self-attack 1, hostile-shim variant: a CLI whose `status --json` reports
+#     a DIFFERENT project than the one just linked must be caught by the
+#     exact-equality check (a prefix match would wave this through when the
+#     reported id merely shares the literal's prefix - here it reports the
+#     production project outright).
+reset_state
+cat > "$TMP/lying-railway.sh" <<'EOF_LYING'
+#!/bin/sh
+# Delegates everything to the standard shim except `status`, which lies and
+# reports the production project id.
+if [ "${1:-}" = "status" ]; then
+  printf '%s railway status %s\n' READ "${2:---json}" >> "$FAKE_RAILWAY_LOG"
+  printf '{"project":{"id":"75faa4fe"},"services":[]}\n'
+  exit 0
+fi
+exec ./infra/tests/fake-railway.sh "$@"
+EOF_LYING
+chmod +x "$TMP/lying-railway.sh"
+if env PAYKIT_PROOF_DROP_CONFIRM=c991d768 RAILWAY_BIN="$TMP/lying-railway.sh" \
+    sh "$SCRIPT" --i-understand-this-drops-the-proof-database >"$TMP/out" 2>"$TMP/err"; then
+  not_ok "refuses when the linked project differs from the immutable proof id"
+elif grep -q "linked project '75faa4fe' is not the proof project (c991d768)" "$TMP/err" \
+  && [ "$(mutate_count)" -eq 0 ]; then
+  ok "refuses when the linked project differs from the immutable proof id"
+else
+  not_ok "refuses when the linked project differs from the immutable proof id"
+  sed 's/^/  err: /' "$TMP/err"
+fi
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -21,11 +21,29 @@
 #   - full match                   -> simulated successful boot: sleeps forever.
 #     A real server that boots here means the invariant machinery is BROKEN;
 #     the gate must detect the still-running process, kill it, and fail.
+#
+# Test hooks (the gate tests only; never set in real use):
+#   FAKE_SERVER_FORCE_STDERR   print exactly this on stderr and exit 1 -
+#                              emulates an arbitrary non-Deployment boot
+#                              failure (or the marker phrase embedded in
+#                              unrelated text).
+#   FAKE_SERVER_DELAY_SECONDS  sleep this long BEFORE evaluating, so the
+#                              refusal lands deep inside the gate's timeout
+#                              window (a refusal arriving between the gate's
+#                              last liveness check and the window close must
+#                              be reaped, not misclassified as still running).
 set -eu
 
 : "${PAYKIT_CONFIG:?PAYKIT_CONFIG is required}"
 : "${PAYKIT_DATABASE_URL:?PAYKIT_DATABASE_URL is required}"
 : "${FAKE_DB_DIR:?FAKE_DB_DIR is required}"
+
+if [ -n "${FAKE_SERVER_FORCE_STDERR:-}" ]; then
+  printf '%s\n' "$FAKE_SERVER_FORCE_STDERR" >&2
+  exit 1
+fi
+
+[ -z "${FAKE_SERVER_DELAY_SECONDS:-}" ] || sleep "$FAKE_SERVER_DELAY_SECONDS"
 
 db="${PAYKIT_DATABASE_URL##*/}"
 state="$FAKE_DB_DIR/$db"

@@ -12,11 +12,16 @@
 # SELF-ATTACK TABLE - how could this delete the wrong database, and what
 # stops it:
 #
-#   1. Wrong project id: PAYKIT_PROOF_DROP_CONFIRM pasted from the production
+#   1. Wrong project id: the operator's environment carries
+#      PAYKIT_PROOF_PROJECT_ID=<production id> (a leftover from another
+#      shell), or PAYKIT_PROOF_DROP_CONFIRM is pasted from the production
 #      project (75faa4fe...) or anywhere else.
-#      -> The confirm value must EXACTLY equal the proof project id constant
-#         in this script; production's id fails the comparison before any
-#         railway call is made.
+#      -> The proof project id is an IMMUTABLE LITERAL in this script. No
+#         environment variable and no flag can change it: PAYKIT_PROOF_PROJECT_ID
+#         is not read at all and has zero effect. `railway status --json` must
+#         report EXACTLY that literal (full equality, never a prefix match),
+#         and PAYKIT_PROOF_DROP_CONFIRM must equal it exactly; production's id
+#         fails the comparison before any mutating railway call is made.
 #   2. Wrong service name: the operator edits the target to
 #      paykit-mainnet-postgres (or anything else).
 #      -> The target is not an argument. It is a hardcoded constant that the
@@ -59,14 +64,20 @@
 #
 # Env:
 #   RAILWAY_BIN               railway binary (tests use the shim; see attack 5)
-#   PAYKIT_PROOF_PROJECT_ID   full proof project id if longer than the
-#                             documented prefix (default c991d768)
+#   PAYKIT_PROOF_DROP_CONFIRM must equal the proof project id literal below
+#                             (self-attack 1). PAYKIT_PROOF_PROJECT_ID is NOT
+#                             read by this script; setting it changes nothing.
 set -eu
 
 RAILWAY_BIN="${RAILWAY_BIN:-railway}"
 
-# The ONLY target this script can ever name (§B.1 stack table). Not an argument.
-PROOF_PROJECT_ID="${PAYKIT_PROOF_PROJECT_ID:-c991d768}"
+# The ONLY target this script can ever name (§B.1 stack table). These are
+# IMMUTABLE LITERALS - not arguments, not environment, overridable by nothing
+# outside an edit to this file (self-attack 1). PROOF_PROJECT_ID must be the
+# FULL project id: the status check below requires exact equality, so a
+# documented-prefix-only value fails closed (refuses) against real Railway
+# until the full id is written here.
+PROOF_PROJECT_ID="c991d768"
 PROOF_SERVICE="paykit-server-proof"
 PROOF_DATABASE="paykit-proof-postgres"
 
@@ -100,13 +111,13 @@ case "$PROOF_SERVICE" in
   *) die "internal: target service name '$PROOF_SERVICE' does not contain 'proof'" ;;
 esac
 
-# Guard 4 (self-attack 7): link the proof project and VERIFY the link.
+# Guard 4 (self-attacks 1 and 7): link the proof project and VERIFY the link
+# with EXACT equality - a prefix match would wave through a hostile shim or a
+# stale link that resolves to a different project sharing the prefix.
 "$RAILWAY_BIN" link --project "$PROOF_PROJECT_ID" >/dev/null
 linked="$("$RAILWAY_BIN" status --json | sed -n 's/.*"project":{"id":"\([^"]*\)".*/\1/p')"
-case "$linked" in
-  "$PROOF_PROJECT_ID"*) ;;
-  *) die "linked project '$linked' is not the proof project ($PROOF_PROJECT_ID)" ;;
-esac
+[ "$linked" = "$PROOF_PROJECT_ID" ] \
+  || die "linked project '$linked' is not the proof project ($PROOF_PROJECT_ID)"
 
 # Guard 5: the database and its sibling service must exist in THIS project.
 "$RAILWAY_BIN" service "$PROOF_DATABASE" >/dev/null 2>&1 \

@@ -4,21 +4,32 @@
 # paykit config pointed at a database initialised for a DIFFERENT network or
 # stack role MUST exit before binding, with StartupError::Deployment.
 #
-# What the fork exposes (read-only check against ps-w1-1): the binary has NO
-# --check-deployment hook - paykit-server/src/main.rs runs the full boot, and
-# the deployment-invariant refusal is startup.rs StartupError::Deployment,
-# whose display string is "deployment initialization failed", printed by
-# anyhow on stderr as the process exits non-zero BEFORE the listener binds
-# (initialize_database runs before TcpListener::bind). The check is also
-# secret-free by design (startup.rs: "Secret-free failures"), so stderr is
-# safe to surface.
+# What the fork exposes (read-only check against the deploy-target hardening
+# line, ps-w1-1 @ 8762fa2): the binary has NO --check-deployment hook -
+# paykit-server/src/main.rs runs the full boot, and the deployment-invariant
+# refusal is StartupError::Deployment (startup.rs L23-25), whose thiserror
+# display string is "deployment initialization failed". main() returns
+# anyhow::Result and initialize_database is awaited with `?` (main.rs L27),
+# so the process exits non-zero BEFORE the listener binds with exactly this
+# line on stderr (anyhow's "Error: " prefix + the display string):
+#
+#   Error: deployment initialization failed
+#
+# The gate anchors on that COMPLETE line (grep with ^...$), never a
+# substring: the phrase embedded in any other text proves nothing. And a
+# stderr carrying the connection-failure signature (StartupError::Connection,
+# startup.rs L17-19: "postgres connection failed") is ALWAYS a gate failure,
+# even if the refusal line is also present: a boot that could not reach the
+# database never evaluated the invariant. The check is secret-free by design
+# (startup.rs: "Secret-free failures"), so stderr is safe to surface.
 #
 # The gate therefore is: render the real entrypoint config for the intended
 # stack -> boot the real image's binary against the WRONG database URL ->
-# assert (a) non-zero exit, (b) the Deployment string on stderr, (c) the
-# process did NOT survive to serve. A process still running after the timeout
-# means it booted against the wrong database: the invariant machinery is
-# broken and the cutover STOPPED.
+# assert (a) non-zero exit, (b) the exact anchored Deployment line on stderr,
+# (c) no connection-failure signature on stderr, (d) the process did NOT
+# survive to serve. A process still running after the timeout means it booted
+# against the wrong database: the invariant machinery is broken and the
+# cutover STOPPED.
 #
 # The two checks from §B.1:
 #   1. proof gate (before proofs):      --role proof,    GATE_DATABASE_URL =
@@ -120,13 +131,21 @@ while [ "$elapsed" -lt "$GATE_TIMEOUT_SECONDS" ]; do
 done
 
 if [ -z "$exit_code" ]; then
-  echo "miswiring-gate: FAIL - the server is STILL RUNNING after ${GATE_TIMEOUT_SECONDS}s:" >&2
-  echo "miswiring-gate: it BOOTED against a database initialised for a different" >&2
-  echo "miswiring-gate: network/role. The deployment-invariant machinery is broken;" >&2
-  echo "miswiring-gate: STOP the cutover. (killed pid $server_pid)" >&2
-  kill "$server_pid" 2>/dev/null || true
-  server_pid=""
-  exit 1
+  # The window closed between liveness checks: the loop's last kill -0 may
+  # predate the exit by up to a second (a fast-exiting or slow-refusing
+  # binary must not be misclassified as surviving). Reap FIRST; only a
+  # process that is still alive right now is "STILL RUNNING".
+  if kill -0 "$server_pid" 2>/dev/null; then
+    echo "miswiring-gate: FAIL - the server is STILL RUNNING after ${GATE_TIMEOUT_SECONDS}s:" >&2
+    echo "miswiring-gate: it BOOTED against a database initialised for a different" >&2
+    echo "miswiring-gate: network/role. The deployment-invariant machinery is broken;" >&2
+    echo "miswiring-gate: STOP the cutover. (killed pid $server_pid)" >&2
+    kill "$server_pid" 2>/dev/null || true
+    server_pid=""
+    exit 1
+  fi
+  wait "$server_pid" || exit_code=$?
+  exit_code="${exit_code:-0}"
 fi
 server_pid=""
 
@@ -135,12 +154,28 @@ if [ "$exit_code" -eq 0 ]; then
   exit 1
 fi
 
-if ! grep -q "deployment initialization failed" "$TMP/server.err"; then
-  echo "miswiring-gate: FAIL - non-zero exit ($exit_code) but NOT StartupError::Deployment:" >&2
+# The refusal marker is the fork's COMPLETE error line, anchored: anyhow
+# prints "Error: " + StartupError::Deployment's display string. A substring
+# match would pass on the phrase embedded in unrelated text.
+if ! grep -q '^Error: deployment initialization failed$' "$TMP/server.err"; then
+  echo "miswiring-gate: FAIL - non-zero exit ($exit_code) but NOT the exact" >&2
+  echo "miswiring-gate: StartupError::Deployment refusal line" >&2
+  echo "miswiring-gate: 'Error: deployment initialization failed' on stderr:" >&2
+  sed 's/^/miswiring-gate: stderr: /' "$TMP/server.err" >&2
+  exit 1
+fi
+
+# A connection-failure signature anywhere on stderr voids the pass: the boot
+# never reached the invariant, so the refusal line proves nothing.
+if grep -q "postgres connection failed" "$TMP/server.err"; then
+  echo "miswiring-gate: FAIL - stderr carries the StartupError::Connection" >&2
+  echo "miswiring-gate: signature ('postgres connection failed'): the database" >&2
+  echo "miswiring-gate: was unreachable and the deployment invariant was never" >&2
+  echo "miswiring-gate: evaluated. This is not evidence of a refusal:" >&2
   sed 's/^/miswiring-gate: stderr: /' "$TMP/server.err" >&2
   exit 1
 fi
 
 echo "miswiring-gate: PASS - mainnet/$role config refused to boot against the"
 echo "miswiring-gate: wrong database before binding, with StartupError::Deployment"
-echo "miswiring-gate: (\"deployment initialization failed\", exit $exit_code)."
+echo "miswiring-gate: ('Error: deployment initialization failed', exit $exit_code)."
