@@ -71,8 +71,22 @@ else
   not_ok "PAYKIT_MASTER_KEY and PAYKIT_REQUEST_SIGNING_KEY generated (43-char base64url, distinct)"
 fi
 
-if ! grep -q "$master_key" "$FAKE_RAILWAY_LOG" \
-  && ! grep -q "$signing_key" "$FAKE_RAILWAY_LOG" \
+# A base64url key can begin with '-': plain `grep -q "$key"` then parses the
+# key as OPTIONS (BSD grep: "Invalid argument", exit 2) and `! grep -q`
+# inverts the error into a vacuous PASS - the secret-absence check would have
+# checked nothing. `-F -e` makes the key a fixed-string pattern operand, and
+# exit 2 (grep itself errored) is mapped to a distinct failure so a grep
+# error can never masquerade as "secret absent".
+secret_absent_from_log() {
+  grep -qF -e "$1" "$FAKE_RAILWAY_LOG" 2>/dev/null
+  case $? in
+    1) return 0 ;;  # genuinely absent
+    0) return 1 ;;  # PRESENT: the shim logged a raw secret
+    *) return 2 ;;  # grep errored: the check proved nothing
+  esac
+}
+if secret_absent_from_log "$master_key" \
+  && secret_absent_from_log "$signing_key" \
   && grep -q '^MUTATE railway variables set PAYKIT_MASTER_KEY=<redacted:stdin>$' "$FAKE_RAILWAY_LOG" \
   && grep -q '^MUTATE railway variables set PAYKIT_REQUEST_SIGNING_KEY=<redacted:stdin>$' "$FAKE_RAILWAY_LOG" \
   && ! grep -E '^MUTATE railway variables set [A-Z_]+=[^<]' "$FAKE_RAILWAY_LOG" >/dev/null; then
