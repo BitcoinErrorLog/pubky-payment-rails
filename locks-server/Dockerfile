@@ -1,6 +1,7 @@
 # Lock Server built from the pinned BitcoinErrorLog/locks revision (master
-# merge of #1, Bitkit grant connect beside the Ring cookie QR). The fork is
-# pubky/locks plus that change; the build stage mirrors the fork's own
+# merge of #2: public creator authority status and migration 0010, on top of
+# #1's Bitkit grant connect). The fork is pubky/locks plus those changes; the
+# build stage mirrors the fork's own
 # Dockerfile at that revision. The source is cloned at build time and pinned
 # fail-closed. Base images are pinned by index digest (resolved 2026-09-24); the
 # apk packages still come from the Alpine 3.20 repositories at build time.
@@ -27,7 +28,7 @@ ENV OPENSSL_INCLUDE_DIR=/usr/include
 ENV SQLX_OFFLINE=true
 
 ARG LOCKS_REPO=https://github.com/BitcoinErrorLog/locks.git
-ARG LOCKS_REV=c489b59eaa19ef905aa2070f6f98c3a54a426583
+ARG LOCKS_REV=5a984e44b323dc40c9e3b8d853c42a3d122bf155
 
 WORKDIR /usr/src/app
 RUN git clone "$LOCKS_REPO" . \
@@ -40,7 +41,7 @@ RUN cargo build --release -p locks-server --bin locks-server \
 FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
 
 ARG LOCKS_REPO=https://github.com/BitcoinErrorLog/locks.git
-ARG LOCKS_REV=c489b59eaa19ef905aa2070f6f98c3a54a426583
+ARG LOCKS_REV=5a984e44b323dc40c9e3b8d853c42a3d122bf155
 LABEL org.opencontainers.image.title="Lock Server (Railway rails)" \
       org.opencontainers.image.source="https://github.com/BitcoinErrorLog/pubky-payment-rails" \
       io.pubky.locks.repository="$LOCKS_REPO" \

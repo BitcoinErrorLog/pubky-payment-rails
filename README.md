@@ -281,11 +281,19 @@ railway service source connect --project <project-id> --environment <environment
   --image ghcr.io/bitcoinerrorlog/locks-server@sha256:<digest>
 ```
 
-Rollback is Railway's deployment rollback to the previous successful
-deployment, which restores that deployment's exact image and its custom
-variables (`railway api 'mutation { deploymentRollback(id: "<deployment-id>") }'`).
-No rebuilt image stands in for a previous deployment: a rebuild of an older
-revision is source-equivalent, not byte-identical.
+Rolling back past locks migration 0010 (`0010_creator_authority_refused_at.sql`,
+first in locks `5a984e44`) is not supported. Every Lock Server image runs its
+migrations at startup and validates all applied ones (`sqlx::migrate!`,
+`ignore_missing: false`), so once 0010 has run, an image that embeds only
+0001-0009 fails with `VersionMissing(10)`, and a Railway deployment rollback to
+such a deployment does not start. Recovery is fixing forward: publish and
+connect a new image that keeps 0010.
+
+Railway's deployment rollback (`railway api 'mutation { deploymentRollback(id:
+"<deployment-id>") }'`), which restores a deployment's exact image and custom
+variables, applies only between deployments whose images embed the same
+migrations. No rebuilt image stands in for a previous deployment: a rebuild of
+an older revision is source-equivalent, not byte-identical.
 
 Rebuilding is deterministic: sources are cloned at the pinned revisions during
 the image build. To bump a pin, change the `ARG` default in the service's
