@@ -16,6 +16,10 @@
 #   3. [pkdns] advertises the Railway public HTTPS domain (ICANN record) and
 #      publishes through the public pkarr relays.
 #   4. The Paykit Server is reached over Railway private networking.
+#   5. LOCKS_GRANT_CONNECT_CLIENT_ID (optional) turns on the Bitkit grant QR
+#      beside the Ring cookie QR. Unset, the config has no grant_connect
+#      section and /connect renders the cookie-only shell. The grant PoP key is
+#      derived from LOCKS_KEYPAIR_SEED; there is no separate grant secret.
 set -eu
 
 : "${LOCKS_KEYPAIR_SEED:?LOCKS_KEYPAIR_SEED is required (keypair-seed:<base64url-32B>)}"
@@ -34,6 +38,20 @@ bind_addr="${LOCKS_BIND_ADDR:-[::]:3000}"
 runtime_environment="${LOCKS_RUNTIME_ENVIRONMENT:-staging}"
 public_ip="${LOCKS_PKDNS_PUBLIC_IP:-127.0.0.1}"
 allowed_origins="${LOCKS_ALLOWED_RETURN_ORIGINS:?LOCKS_ALLOWED_RETURN_ORIGINS is required (comma-separated origins)}"
+grant_connect_client_id="${LOCKS_GRANT_CONNECT_CLIENT_ID:-}"
+
+grant_connect_toml=""
+if [ -n "$grant_connect_client_id" ]; then
+  case "$grant_connect_client_id" in
+    *[!a-z0-9.:-]*)
+      echo "[locks-railway] LOCKS_GRANT_CONNECT_CLIENT_ID must be a lowercase hostname with an optional port" >&2
+      exit 1
+      ;;
+  esac
+  grant_connect_toml="
+[creator_authority_acquisition.grant_connect]
+client_id = \"$grant_connect_client_id\""
+fi
 
 mkdir -p "$service_home"
 umask 077
@@ -78,6 +96,7 @@ frontend_session_code_ttl_seconds = 120
 
 [creator_authority_acquisition.legacy_connect]
 allowed_return_origins = [$origins_toml]
+$grant_connect_toml
 
 [secrets]
 creator_authority_key_env = "PUBKY_LOCK_CREATOR_AUTH_ENCRYPTION_KEY"
@@ -87,12 +106,12 @@ level = "${LOCKS_LOG_LEVEL:-info}"
 
 [pubky]
 network = "mainnet"
+pkarr_relays = ["https://pkarr.pubky.app", "https://pkarr.pubky.org"]
 
 [pkdns]
 public_ip = "$public_ip"
 public_icann_http_port = 443
 icann_domain = "$LOCKS_PUBLIC_DOMAIN"
-pkarr_relays = ["https://pkarr.pubky.app", "https://pkarr.pubky.org"]
 key_republisher_interval_seconds = 3600
 
 [paykit]
@@ -110,5 +129,7 @@ max_resources = 10
 max_total_resource_bytes = 100000000
 EOF
 
-echo "[locks-railway] starting locks-server (identity $LOCKS_PUBLIC_KEY, domain $LOCKS_PUBLIC_DOMAIN)"
+grant_connect_state="off"
+[ -n "$grant_connect_client_id" ] && grant_connect_state="on ($grant_connect_client_id)"
+echo "[locks-railway] starting locks-server (identity $LOCKS_PUBLIC_KEY, domain $LOCKS_PUBLIC_DOMAIN, grant connect $grant_connect_state)"
 exec locks-server --config "$config_path"

@@ -1,7 +1,7 @@
 # pubky-payment-rails
 
 Railway deployment of the Pubky marketplace staging payment rails: Lock Server
-(pubky/locks) + Paykit Server (BitcoinErrorLog/paykit-server, marketplace-rails
+(BitcoinErrorLog/locks, a fork of pubky/locks) + Paykit Server (BitcoinErrorLog/paykit-server, marketplace-rails
 fork of pubky/paykit-server) + Bitcoin Core regtest +
 Fulcrum, running real payment mechanics with valueless regtest coins.
 
@@ -119,6 +119,13 @@ IPv6 wildcard.
 - `LOCKS_PAYKIT_MIN_CONFIRMATIONS` (default 1)
 - `LOCKS_PKDNS_PUBLIC_IP` - advisory A-record IP for the PKARR packet; HTTP
   clients use the ICANN domain record.
+- `LOCKS_GRANT_CONNECT_CLIENT_ID` (optional) - the Lock Server's public
+  hostname. When set, `/connect` shows a Bitkit `signin_grant` QR beside the
+  Pubky Ring cookie QR, and Bitkit shows this value as the requesting app.
+  Unset, the config has no `grant_connect` section and `/connect` is
+  cookie-only. The grant Proof-of-Possession key is derived from
+  `LOCKS_KEYPAIR_SEED`, so there is no extra secret; rotating the seed orphans
+  stored grant authorities.
 
 ### paykit-server
 - `PAYKIT_TRUSTED_LOCKS_PUBLIC_KEY` - must equal `LOCKS_PUBLIC_KEY`.
@@ -261,6 +268,20 @@ railway up --service locks-server --path-as-root locks-server --detach
 railway up --service paykit-server --path-as-root paykit-server --detach
 railway up --service bitcoind --path-as-root bitcoind --detach
 railway up --service fulcrum --path-as-root fulcrum --detach
+```
+
+`locks-server` can also ship as an immutable image built from
+`locks-server/` and connected by digest, which makes a rollback a reconnect of
+the previous digest (or a Railway deployment rollback, which restores the image
+and the custom variables of that deployment):
+
+```bash
+docker buildx build --platform linux/amd64 --provenance=true --sbom=true \
+  --tag ghcr.io/bitcoinerrorlog/locks-server:<tag> \
+  --metadata-file push-metadata.json --push locks-server
+railway service source connect --project <project-id> --environment <environment-id> \
+  --service <locks-server-service-id> \
+  --image ghcr.io/bitcoinerrorlog/locks-server@sha256:<digest>
 ```
 
 Rebuilding is deterministic: sources are cloned at the pinned revisions during
