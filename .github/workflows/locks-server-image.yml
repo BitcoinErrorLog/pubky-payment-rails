@@ -1,0 +1,167 @@
+name: Lock Server image
+
+# Builds the Railway Lock Server image from locks-server/. Publishing runs only on
+# workflow_dispatch from master; the digest comes from the buildx push metadata
+# and is uploaded as publish-evidence.json. Rollback is Railway's deployment
+# rollback, which keeps the exact previous image; no rollback image is built here.
+
+on:
+  push:
+    paths:
+      - locks-server/**
+      - .github/workflows/locks-server-image.yml
+  pull_request:
+    paths:
+      - locks-server/**
+      - .github/workflows/locks-server-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: locks-server-image-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/bitcoinerrorlog/locks-server
+
+jobs:
+  check:
+    name: Build Lock Server image without publishing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Check image definitions
+        run: |
+          set -eu
+          grep -qE '^ARG LOCKS_REV=[0-9a-f]{40}$' locks-server/Dockerfile
+          grep -q 'ARG LOCKS_REPO=https://github.com/BitcoinErrorLog/locks.git' locks-server/Dockerfile
+          if grep -nE '^FROM ' locks-server/Dockerfile | grep -vE '^[0-9]+:FROM [^[:space:]]+@sha256:[0-9a-f]{64}([[:space:]]|$)'; then
+            echo "every FROM in locks-server/Dockerfile must pin a sha256 digest" >&2
+            exit 1
+          fi
+          grep -q 'packages: write' .github/workflows/locks-server-image.yml
+          if grep -nE ':[[:space:]]*latest([[:space:]]|$)' .github/workflows/locks-server-image.yml; then
+            echo "workflow contains a mutable image tag" >&2
+            exit 1
+          fi
+
+      - name: Check generated config
+        run: |
+          set -eu
+          work="$RUNNER_TEMP/entrypoint-check"
+          mkdir -p "$work/bin"
+          printf '#!/bin/sh\ncat "$2"\n' > "$work/bin/locks-server"
+          chmod +x "$work/bin/locks-server"
+          sed "s#/var/lib/pubky-lock#$work/home#g" locks-server/entrypoint.sh > "$work/entrypoint.sh"
+          export LOCKS_KEYPAIR_SEED=keypair-seed:check LOCKS_PUBLIC_KEY=pubkycheck LOCKS_PUBLIC_DOMAIN=locks.example \
+            PUBKY_LOCK_DATABASE_URL=postgres://check PUBKY_LOCK_CREATOR_AUTH_ENCRYPTION_KEY=check \
+            LOCKS_ALLOWED_RETURN_ORIGINS=https://app.example
+          PATH="$work/bin:$PATH" sh "$work/entrypoint.sh" > "$work/off.toml"
+          if grep -q 'grant_connect' "$work/off.toml"; then
+            echo "grant_connect was written without LOCKS_GRANT_CONNECT_CLIENT_ID" >&2
+            exit 1
+          fi
+          LOCKS_GRANT_CONNECT_CLIENT_ID=locks.example PATH="$work/bin:$PATH" sh "$work/entrypoint.sh" > "$work/on.toml"
+          grep -q '^\[creator_authority_acquisition.grant_connect\]$' "$work/on.toml"
+          grep -q '^client_id = "locks.example"$' "$work/on.toml"
+          test "$(sed -n '/^\[pubky\]$/,/^\[/p' "$work/on.toml" | grep -c '^pkarr_relays = ')" = 1
+          test "$(sed -n '/^\[pkdns\]$/,/^\[/p' "$work/on.toml" | grep -c '^pkarr_relays = ')" = 0
+          if LOCKS_GRANT_CONNECT_CLIENT_ID='bad"id' PATH="$work/bin:$PATH" sh "$work/entrypoint.sh" > /dev/null 2>&1; then
+            echo "an invalid LOCKS_GRANT_CONNECT_CLIENT_ID was accepted" >&2
+            exit 1
+          fi
+
+      - name: Build release image without publishing
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/locks-server-image"
+          docker buildx build --platform linux/amd64 \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --tag "$IMAGE:check-$GITHUB_SHA" \
+            --provenance=true --sbom=true \
+            --metadata-file "$RUNNER_TEMP/locks-server-image/release-metadata.json" \
+            --output "type=oci,dest=$RUNNER_TEMP/locks-server-image/release.tar" \
+            locks-server
+          test -s "$RUNNER_TEMP/locks-server-image/release.tar"
+
+      - name: Upload build evidence
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
+        with:
+          name: locks-server-image-check-${{ github.sha }}
+          path: ${{ runner.temp }}/locks-server-image/release-metadata.json
+
+  publish:
+    name: Publish immutable Lock Server image
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master'
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Publish release image
+        run: |
+          set -eu
+          test "$GITHUB_REF" = refs/heads/master
+          test "$GITHUB_SHA" = "$(git rev-parse HEAD)"
+          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/master
+          out="$RUNNER_TEMP/locks-server-image"
+          mkdir -p "$out"
+          locks_rev="$(sed -n 's/^ARG LOCKS_REV=//p' locks-server/Dockerfile | head -n 1)"
+          release_tag="$IMAGE:locks-${locks_rev:0:12}-rails-${GITHUB_SHA:0:12}"
+          docker buildx build --platform linux/amd64 \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --tag "$release_tag" \
+            --provenance=true --sbom=true --push \
+            --metadata-file "$out/release-push-metadata.json" \
+            locks-server
+          release_digest="$(jq -r '."containerimage.digest" // empty' "$out/release-push-metadata.json")"
+          case "$release_digest" in sha256:*) ;; *) echo "missing image digest" >&2; exit 1 ;; esac
+          jq -n \
+            --arg rails_sha "$GITHUB_SHA" \
+            --arg locks_rev "$locks_rev" \
+            --arg release_tag "$release_tag" \
+            --arg release_image "$IMAGE@$release_digest" \
+            --arg digest "$release_digest" \
+            '{
+              rails_sha: $rails_sha,
+              locks_revision: $locks_rev,
+              tag: $release_tag,
+              digest: $digest,
+              immutable_image: $release_image
+            }' > "$out/publish-evidence.json"
+          {
+            echo "### Published Lock Server image"
+            echo "- immutable image: \`$IMAGE@$release_digest\` (locks \`$locks_rev\`)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload publish evidence
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
+        with:
+          name: locks-server-image-publish-${{ github.sha }}
+          path: ${{ runner.temp }}/locks-server-image/publish-evidence.json
+          retention-days: 14

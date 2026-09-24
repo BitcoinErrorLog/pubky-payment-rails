@@ -1,7 +1,7 @@
 # pubky-payment-rails
 
 Railway deployment of the Pubky marketplace staging payment rails: Lock Server
-(pubky/locks) + Paykit Server (BitcoinErrorLog/paykit-server, marketplace-rails
+(BitcoinErrorLog/locks, a fork of pubky/locks) + Paykit Server (BitcoinErrorLog/paykit-server, marketplace-rails
 fork of pubky/paykit-server) + Bitcoin Core regtest +
 Fulcrum, running real payment mechanics with valueless regtest coins.
 
@@ -119,6 +119,13 @@ IPv6 wildcard.
 - `LOCKS_PAYKIT_MIN_CONFIRMATIONS` (default 1)
 - `LOCKS_PKDNS_PUBLIC_IP` - advisory A-record IP for the PKARR packet; HTTP
   clients use the ICANN domain record.
+- `LOCKS_GRANT_CONNECT_CLIENT_ID` (optional) - the Lock Server's public
+  hostname. When set, `/connect` shows a Bitkit `signin_grant` QR beside the
+  Pubky Ring cookie QR, and Bitkit shows this value as the requesting app.
+  Unset, the config has no `grant_connect` section and `/connect` is
+  cookie-only. The grant Proof-of-Possession key is derived from
+  `LOCKS_KEYPAIR_SEED`, so there is no extra secret; rotating the seed orphans
+  stored grant authorities.
 
 ### paykit-server
 - `PAYKIT_TRUSTED_LOCKS_PUBLIC_KEY` - must equal `LOCKS_PUBLIC_KEY`.
@@ -262,6 +269,23 @@ railway up --service paykit-server --path-as-root paykit-server --detach
 railway up --service bitcoind --path-as-root bitcoind --detach
 railway up --service fulcrum --path-as-root fulcrum --detach
 ```
+
+`locks-server` can also ship as an immutable image. The `Lock Server image`
+workflow builds `locks-server/` (base images pinned by digest) and publishes it
+to `ghcr.io/bitcoinerrorlog/locks-server` only when dispatched on `master`; the
+digest is in the run's `publish-evidence.json` artifact. Connect it by digest:
+
+```bash
+railway service source connect --project <project-id> --environment <environment-id> \
+  --service <locks-server-service-id> \
+  --image ghcr.io/bitcoinerrorlog/locks-server@sha256:<digest>
+```
+
+Rollback is Railway's deployment rollback to the previous successful
+deployment, which restores that deployment's exact image and its custom
+variables (`railway api 'mutation { deploymentRollback(id: "<deployment-id>") }'`).
+No rebuilt image stands in for a previous deployment: a rebuild of an older
+revision is source-equivalent, not byte-identical.
 
 Rebuilding is deterministic: sources are cloned at the pinned revisions during
 the image build. To bump a pin, change the `ARG` default in the service's
