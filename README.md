@@ -270,19 +270,22 @@ railway up --service bitcoind --path-as-root bitcoind --detach
 railway up --service fulcrum --path-as-root fulcrum --detach
 ```
 
-`locks-server` can also ship as an immutable image built from
-`locks-server/` and connected by digest, which makes a rollback a reconnect of
-the previous digest (or a Railway deployment rollback, which restores the image
-and the custom variables of that deployment):
+`locks-server` can also ship as an immutable image. The `Lock Server image`
+workflow builds `locks-server/` (base images pinned by digest) and publishes it
+to `ghcr.io/bitcoinerrorlog/locks-server` only when dispatched on `master`; the
+digest is in the run's `publish-evidence.json` artifact. Connect it by digest:
 
 ```bash
-docker buildx build --platform linux/amd64 --provenance=true --sbom=true \
-  --tag ghcr.io/bitcoinerrorlog/locks-server:<tag> \
-  --metadata-file push-metadata.json --push locks-server
 railway service source connect --project <project-id> --environment <environment-id> \
   --service <locks-server-service-id> \
   --image ghcr.io/bitcoinerrorlog/locks-server@sha256:<digest>
 ```
+
+Rollback is Railway's deployment rollback to the previous successful
+deployment, which restores that deployment's exact image and its custom
+variables (`railway api 'mutation { deploymentRollback(id: "<deployment-id>") }'`).
+No rebuilt image stands in for a previous deployment: a rebuild of an older
+revision is source-equivalent, not byte-identical.
 
 Rebuilding is deterministic: sources are cloned at the pinned revisions during
 the image build. To bump a pin, change the `ARG` default in the service's

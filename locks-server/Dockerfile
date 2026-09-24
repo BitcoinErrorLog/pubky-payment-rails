@@ -2,8 +2,9 @@
 # merge of #1, Bitkit grant connect beside the Ring cookie QR). The fork is
 # pubky/locks plus that change; the build stage mirrors the fork's own
 # Dockerfile at that revision. The source is cloned at build time and pinned
-# fail-closed.
-FROM rust:1.91.1-alpine3.20 AS builder
+# fail-closed. Base images are pinned by index digest (resolved 2026-09-24); the
+# apk packages still come from the Alpine 3.20 repositories at build time.
+FROM rust:1.91.1-alpine3.20@sha256:1f1428db130caff5a0ae90d268a9dda7ba5fd6dad69792ab23483a31f11c1338 AS builder
 
 # The repository's rust-toolchain.toml also asks rustup for clippy, rustfmt and
 # the wasm target; the image's 1.91.1 toolchain is all the server build needs.
@@ -36,7 +37,7 @@ RUN git clone "$LOCKS_REPO" . \
 RUN cargo build --release -p locks-server --bin locks-server \
     && strip target/release/locks-server
 
-FROM alpine:3.20
+FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
 
 ARG LOCKS_REPO=https://github.com/BitcoinErrorLog/locks.git
 ARG LOCKS_REV=c489b59eaa19ef905aa2070f6f98c3a54a426583

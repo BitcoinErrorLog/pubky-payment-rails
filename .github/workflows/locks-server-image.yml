@@ -1,9 +1,9 @@
 name: Lock Server image
 
-# Builds the Railway Lock Server image from locks-server/ and the rollback image
-# from the wrapper as deployed since 2026-08-21 (43cdd0e109, pubky/locks@ba49a777).
-# Publishing runs only on workflow_dispatch from master; digests come from the
-# buildx push metadata and are uploaded as publish-evidence.json.
+# Builds the Railway Lock Server image from locks-server/. Publishing runs only on
+# workflow_dispatch from master; the digest comes from the buildx push metadata
+# and is uploaded as publish-evidence.json. Rollback is Railway's deployment
+# rollback, which keeps the exact previous image; no rollback image is built here.
 
 on:
   push:
@@ -25,12 +25,10 @@ concurrency:
 
 env:
   IMAGE: ghcr.io/bitcoinerrorlog/locks-server
-  ROLLBACK_RAILS_REV: 43cdd0e109a11fbd9d5510d77d184b9506222afd
-  ROLLBACK_LOCKS_REV: ba49a777a94db318ec6ebd427315080a5b904645
 
 jobs:
   check:
-    name: Build Lock Server images without publishing
+    name: Build Lock Server image without publishing
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -47,12 +45,15 @@ jobs:
           set -eu
           grep -qE '^ARG LOCKS_REV=[0-9a-f]{40}$' locks-server/Dockerfile
           grep -q 'ARG LOCKS_REPO=https://github.com/BitcoinErrorLog/locks.git' locks-server/Dockerfile
+          if grep -nE '^FROM ' locks-server/Dockerfile | grep -vE '^[0-9]+:FROM [^[:space:]]+@sha256:[0-9a-f]{64}([[:space:]]|$)'; then
+            echo "every FROM in locks-server/Dockerfile must pin a sha256 digest" >&2
+            exit 1
+          fi
           grep -q 'packages: write' .github/workflows/locks-server-image.yml
           if grep -nE ':[[:space:]]*latest([[:space:]]|$)' .github/workflows/locks-server-image.yml; then
             echo "workflow contains a mutable image tag" >&2
             exit 1
           fi
-          git archive "$ROLLBACK_RAILS_REV" locks-server/Dockerfile | tar -xO | grep -q "ARG LOCKS_REV=$ROLLBACK_LOCKS_REV"
 
       - name: Check generated config
         run: |
@@ -93,31 +94,14 @@ jobs:
             locks-server
           test -s "$RUNNER_TEMP/locks-server-image/release.tar"
 
-      - name: Build rollback image without publishing
-        run: |
-          set -eu
-          rollback="$RUNNER_TEMP/rollback"
-          mkdir -p "$rollback"
-          git archive "$ROLLBACK_RAILS_REV" locks-server | tar -x -C "$rollback"
-          docker buildx build --platform linux/amd64 \
-            --label "org.opencontainers.image.revision=$ROLLBACK_RAILS_REV" \
-            --tag "$IMAGE:check-rollback-$GITHUB_SHA" \
-            --provenance=true --sbom=true \
-            --metadata-file "$RUNNER_TEMP/locks-server-image/rollback-metadata.json" \
-            --output "type=oci,dest=$RUNNER_TEMP/locks-server-image/rollback.tar" \
-            "$rollback/locks-server"
-          test -s "$RUNNER_TEMP/locks-server-image/rollback.tar"
-
       - name: Upload build evidence
         uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
         with:
           name: locks-server-image-check-${{ github.sha }}
-          path: |
-            ${{ runner.temp }}/locks-server-image/release-metadata.json
-            ${{ runner.temp }}/locks-server-image/rollback-metadata.json
+          path: ${{ runner.temp }}/locks-server-image/release-metadata.json
 
   publish:
-    name: Publish immutable Lock Server images
+    name: Publish immutable Lock Server image
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master'
     needs: check
     runs-on: ubuntu-24.04
@@ -139,7 +123,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
 
-      - name: Publish release and rollback images
+      - name: Publish release image
         run: |
           set -eu
           test "$GITHUB_REF" = refs/heads/master
@@ -155,39 +139,24 @@ jobs:
             --provenance=true --sbom=true --push \
             --metadata-file "$out/release-push-metadata.json" \
             locks-server
-          rollback="$RUNNER_TEMP/rollback"
-          mkdir -p "$rollback"
-          git archive "$ROLLBACK_RAILS_REV" locks-server | tar -x -C "$rollback"
-          rollback_tag="$IMAGE:rollback-pubky-locks-${ROLLBACK_LOCKS_REV:0:12}-rails-${ROLLBACK_RAILS_REV:0:12}"
-          docker buildx build --platform linux/amd64 \
-            --label "org.opencontainers.image.revision=$ROLLBACK_RAILS_REV" \
-            --tag "$rollback_tag" \
-            --provenance=true --sbom=true --push \
-            --metadata-file "$out/rollback-push-metadata.json" \
-            "$rollback/locks-server"
           release_digest="$(jq -r '."containerimage.digest" // empty' "$out/release-push-metadata.json")"
-          rollback_digest="$(jq -r '."containerimage.digest" // empty' "$out/rollback-push-metadata.json")"
-          for digest in "$release_digest" "$rollback_digest"; do
-            case "$digest" in sha256:*) ;; *) echo "missing image digest" >&2; exit 1 ;; esac
-          done
+          case "$release_digest" in sha256:*) ;; *) echo "missing image digest" >&2; exit 1 ;; esac
           jq -n \
             --arg rails_sha "$GITHUB_SHA" \
             --arg locks_rev "$locks_rev" \
             --arg release_tag "$release_tag" \
             --arg release_image "$IMAGE@$release_digest" \
-            --arg rollback_tag "$rollback_tag" \
-            --arg rollback_image "$IMAGE@$rollback_digest" \
-            --arg rollback_rails_rev "$ROLLBACK_RAILS_REV" \
-            --arg rollback_locks_rev "$ROLLBACK_LOCKS_REV" \
+            --arg digest "$release_digest" \
             '{
               rails_sha: $rails_sha,
-              release: {tag: $release_tag, immutable_image: $release_image, locks_revision: $locks_rev},
-              rollback: {tag: $rollback_tag, immutable_image: $rollback_image, rails_revision: $rollback_rails_rev, locks_revision: $rollback_locks_rev}
+              locks_revision: $locks_rev,
+              tag: $release_tag,
+              digest: $digest,
+              immutable_image: $release_image
             }' > "$out/publish-evidence.json"
           {
-            echo "### Published Lock Server images"
-            echo "- release: \`$IMAGE@$release_digest\` (locks \`$locks_rev\`)"
-            echo "- rollback: \`$IMAGE@$rollback_digest\` (pubky/locks \`$ROLLBACK_LOCKS_REV\`)"
+            echo "### Published Lock Server image"
+            echo "- immutable image: \`$IMAGE@$release_digest\` (locks \`$locks_rev\`)"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload publish evidence
