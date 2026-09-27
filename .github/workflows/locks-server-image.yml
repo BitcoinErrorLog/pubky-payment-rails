@@ -80,6 +80,19 @@ jobs:
             echo "an invalid LOCKS_GRANT_CONNECT_CLIENT_ID was accepted" >&2
             exit 1
           fi
+          if grep -q 'trusted_proxy_hops' "$work/off.toml"; then
+            echo "trusted_proxy_hops was written without LOCKS_RATE_LIMIT_TRUSTED_PROXY_HOPS" >&2
+            exit 1
+          fi
+          LOCKS_RATE_LIMIT_TRUSTED_PROXY_HOPS=1 PATH="$work/bin:$PATH" sh "$work/entrypoint.sh" > "$work/hops.toml"
+          test "$(sed -n '/^\[rate_limits\]$/,/^\[/p' "$work/hops.toml" | grep -c '^trusted_proxy_hops = 1$')" = 1
+          test "$(grep -c '^\[rate_limits\]$' "$work/hops.toml")" = 1
+          for bad in 01 -1 100 '1 2' x; do
+            if LOCKS_RATE_LIMIT_TRUSTED_PROXY_HOPS="$bad" PATH="$work/bin:$PATH" sh "$work/entrypoint.sh" > /dev/null 2>&1; then
+              echo "an invalid LOCKS_RATE_LIMIT_TRUSTED_PROXY_HOPS ($bad) was accepted" >&2
+              exit 1
+            fi
+          done
 
       - name: Build release image without publishing
         run: |

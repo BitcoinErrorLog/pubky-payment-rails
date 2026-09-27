@@ -28,7 +28,7 @@ exists in this deployment.
 
 | Component | Source | Revision |
 | --- | --- | --- |
-| Lock Server | `pubky/locks` | `ba49a777a94db318ec6ebd427315080a5b904645` |
+| Lock Server | `BitcoinErrorLog/locks` | `53a042826ea9398b16664d7da1af2238962ccde1` |
 | Paykit Server | `BitcoinErrorLog/paykit-server` (`marketplace-rails`; fork of `pubky/paykit-server` @ `f38c7915e6b9b104e040773e78438f8aa984c46c`) | `9687ff07ec4cde7c18970c943d308c6b296a8a42` |
 | paykit-rs (build dep) | `pubky/paykit-rs` | `52a852995bfc457b78d32f5a45f6741766a89bba` |
 | locks-core (build dep) | `pubky/locks` | `df5ea1b6d8dcdec3a9b5a915c3f57bca69d75c8a` |
@@ -126,6 +126,15 @@ IPv6 wildcard.
   cookie-only. The grant Proof-of-Possession key is derived from
   `LOCKS_KEYPAIR_SEED`, so there is no extra secret; rotating the seed orphans
   stored grant authorities.
+- `LOCKS_RATE_LIMIT_TRUSTED_PROXY_HOPS` (optional, `0`-`99`) - written as
+  `[rate_limits] trusted_proxy_hops`. The public
+  `GET /creators/{creator}/authority-status` limit (120 requests per 60 s per
+  client) keys the Nth `X-Forwarded-For` value from the right and is off while
+  this is unset or `0`. Read the count first: set
+  `PUBKY_LOCK_LOG_FORWARDED_HOP_COUNT=1`, request the route, read
+  `forwarded_hop_count` in the deploy log (the line has no addresses), then
+  delete that variable and set this one to the count. Too many hops lets a
+  client pick its own key; too few puts every client in one bucket.
 
 ### paykit-server
 - `PAYKIT_TRUSTED_LOCKS_PUBLIC_KEY` - must equal `LOCKS_PUBLIC_KEY`.
@@ -281,13 +290,15 @@ railway service source connect --project <project-id> --environment <environment
   --image ghcr.io/bitcoinerrorlog/locks-server@sha256:<digest>
 ```
 
-Rolling back past locks migration 0010 (`0010_creator_authority_refused_at.sql`,
-first in locks `5a984e44`) is not supported. Every Lock Server image runs its
-migrations at startup and validates all applied ones (`sqlx::migrate!`,
-`ignore_missing: false`), so once 0010 has run, an image that embeds only
-0001-0009 fails with `VersionMissing(10)`, and a Railway deployment rollback to
-such a deployment does not start. Recovery is fixing forward: publish and
-connect a new image that keeps 0010.
+Rolling back past a locks migration is not supported. The latest are 0010
+(`0010_creator_authority_refused_at.sql`, first in locks `5a984e44`) and 0011
+(`0011_creator_authority_recheck_schedule.sql`, first in locks `53a04282`).
+Every Lock Server image runs its migrations at startup and validates all
+applied ones (`sqlx::migrate!`, `ignore_missing: false`), so once 0011 has run,
+an image that embeds only 0001-0010 fails with `VersionMissing(11)`, and a
+Railway deployment rollback to such a deployment does not start. Recovery is
+fixing forward: publish and connect a new image that keeps every applied
+migration.
 
 Railway's deployment rollback (`railway api 'mutation { deploymentRollback(id:
 "<deployment-id>") }'`), which restores a deployment's exact image and custom
