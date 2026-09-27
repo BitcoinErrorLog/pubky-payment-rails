@@ -28,7 +28,7 @@ ENV OPENSSL_INCLUDE_DIR=/usr/include
 ENV SQLX_OFFLINE=true
 
 ARG LOCKS_REPO=https://github.com/BitcoinErrorLog/locks.git
-ARG LOCKS_REV=5a984e44b323dc40c9e3b8d853c42a3d122bf155
+ARG LOCKS_REV=53a042826ea9398b16664d7da1af2238962ccde1
 
 WORKDIR /usr/src/app
 RUN git clone "$LOCKS_REPO" . \
@@ -41,7 +41,7 @@ RUN cargo build --release -p locks-server --bin locks-server \
 FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
 
 ARG LOCKS_REPO=https://github.com/BitcoinErrorLog/locks.git
-ARG LOCKS_REV=5a984e44b323dc40c9e3b8d853c42a3d122bf155
+ARG LOCKS_REV=53a042826ea9398b16664d7da1af2238962ccde1
 LABEL org.opencontainers.image.title="Lock Server (Railway rails)" \
       org.opencontainers.image.source="https://github.com/BitcoinErrorLog/pubky-payment-rails" \
       io.pubky.locks.repository="$LOCKS_REPO" \
