@@ -20,6 +20,12 @@
 #      beside the Ring cookie QR. Unset, the config has no grant_connect
 #      section and /connect renders the cookie-only shell. The grant PoP key is
 #      derived from LOCKS_KEYPAIR_SEED; there is no separate grant secret.
+#   6. LOCKS_RATE_LIMIT_TRUSTED_PROXY_HOPS (optional) writes
+#      [rate_limits] trusted_proxy_hops, the X-Forwarded-For hop count the
+#      public authority-status limit keys from the right. Unset or 0 leaves
+#      that limit off. Set it only to a count read from this deployment's
+#      PUBKY_LOCK_LOG_FORWARDED_HOP_COUNT=1 log line: too many hops lets a
+#      client choose its own key, too few puts every client in one bucket.
 set -eu
 
 : "${LOCKS_KEYPAIR_SEED:?LOCKS_KEYPAIR_SEED is required (keypair-seed:<base64url-32B>)}"
@@ -51,6 +57,22 @@ if [ -n "$grant_connect_client_id" ]; then
   grant_connect_toml="
 [creator_authority_acquisition.grant_connect]
 client_id = \"$grant_connect_client_id\""
+fi
+
+trusted_proxy_hops="${LOCKS_RATE_LIMIT_TRUSTED_PROXY_HOPS:-}"
+rate_limits_toml=""
+if [ -n "$trusted_proxy_hops" ]; then
+  case "$trusted_proxy_hops" in
+    [0-9] | [1-9][0-9]) ;;
+    *)
+      echo "[locks-railway] LOCKS_RATE_LIMIT_TRUSTED_PROXY_HOPS must be a whole number from 0 to 99" >&2
+      exit 1
+      ;;
+  esac
+  rate_limits_toml="
+[rate_limits]
+trusted_proxy_hops = $trusted_proxy_hops
+"
 fi
 
 mkdir -p "$service_home"
@@ -117,7 +139,7 @@ key_republisher_interval_seconds = 3600
 [paykit]
 server_url = "$paykit_server_url"
 minimum_confirmations = $paykit_min_confirmations
-
+$rate_limits_toml
 [rate_limits.verification_submission]
 enabled = true
 max_requests = 60
@@ -131,5 +153,5 @@ EOF
 
 grant_connect_state="off"
 [ -n "$grant_connect_client_id" ] && grant_connect_state="on ($grant_connect_client_id)"
-echo "[locks-railway] starting locks-server (identity $LOCKS_PUBLIC_KEY, domain $LOCKS_PUBLIC_DOMAIN, grant connect $grant_connect_state)"
+echo "[locks-railway] starting locks-server (identity $LOCKS_PUBLIC_KEY, domain $LOCKS_PUBLIC_DOMAIN, grant connect $grant_connect_state, trusted proxy hops ${trusted_proxy_hops:-unset})"
 exec locks-server --config "$config_path"

@@ -126,6 +126,15 @@ IPv6 wildcard.
   cookie-only. The grant Proof-of-Possession key is derived from
   `LOCKS_KEYPAIR_SEED`, so there is no extra secret; rotating the seed orphans
   stored grant authorities.
+- `LOCKS_RATE_LIMIT_TRUSTED_PROXY_HOPS` (optional, `0`-`99`) - written as
+  `[rate_limits] trusted_proxy_hops`. The public
+  `GET /creators/{creator}/authority-status` limit (120 requests per 60 s per
+  client) keys the Nth `X-Forwarded-For` value from the right and is off while
+  this is unset or `0`. Read the count first: set
+  `PUBKY_LOCK_LOG_FORWARDED_HOP_COUNT=1`, request the route, read
+  `forwarded_hop_count` in the deploy log (the line has no addresses), then
+  delete that variable and set this one to the count. Too many hops lets a
+  client pick its own key; too few puts every client in one bucket.
 
 ### paykit-server
 - `PAYKIT_TRUSTED_LOCKS_PUBLIC_KEY` - must equal `LOCKS_PUBLIC_KEY`.
