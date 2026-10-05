@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE: ghcr.io/bitcoinerrorlog/locks-server
+  IMAGE_NAME: locks-server
 
 jobs:
   check:
@@ -32,6 +32,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
+      # GHCR names must be lowercase, and the owner follows the repository
+      # through a transfer.
+      - name: Resolve image name from repository owner
+        run: |
+          set -eu
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          echo "IMAGE=ghcr.io/$owner/$IMAGE_NAME" >> "$GITHUB_ENV"
+
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -100,6 +108,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/locks-server-image"
           docker buildx build --platform linux/amd64 \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             --tag "$IMAGE:check-$GITHUB_SHA" \
             --provenance=true --sbom=true \
             --metadata-file "$RUNNER_TEMP/locks-server-image/release-metadata.json" \
@@ -123,6 +132,14 @@ jobs:
       contents: read
       packages: write
     steps:
+      # GHCR names must be lowercase, and the owner follows the repository
+      # through a transfer.
+      - name: Resolve image name from repository owner
+        run: |
+          set -eu
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          echo "IMAGE=ghcr.io/$owner/$IMAGE_NAME" >> "$GITHUB_ENV"
+
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -148,6 +165,7 @@ jobs:
           release_tag="$IMAGE:locks-${locks_rev:0:12}-rails-${GITHUB_SHA:0:12}"
           docker buildx build --platform linux/amd64 \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             --tag "$release_tag" \
             --provenance=true --sbom=true --push \
             --metadata-file "$out/release-push-metadata.json" \
