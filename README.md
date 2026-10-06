@@ -60,7 +60,7 @@ marketplace-service ──private─►  (public domain)             │        
 
 Since the fiat-rails Phase 1 cutover (2026-08-21) the Lock Server's single
 `[paykit] server_url` names the `fiat-verifier` gateway
-([`BitcoinErrorLog/pubky-fiat-verifier`](https://github.com/BitcoinErrorLog/pubky-fiat-verifier)),
+([`pubky/pubky-fiat-verifier`](https://github.com/pubky/pubky-fiat-verifier)),
 which forwards BTC criteria to paykit-server verbatim (original body +
 signature) and settles `USD` criteria through Stripe test mode. The
 post-cutover BTC live purchase was re-proven with this driver the same day.
@@ -112,7 +112,7 @@ IPv6 wildcard.
 - `LOCKS_PAYKIT_SERVER_URL` (default `http://paykit-server.railway.internal:3001`) -
   **currently set to `http://fiat-verifier.railway.internal:3002`**: since the
   fiat-rails Phase 1 cutover (2026-08-21) the Lock Server's payment backend is
-  the `fiat-verifier` gateway (`BitcoinErrorLog/pubky-fiat-verifier`, deployed
+  the `fiat-verifier` gateway (`pubky/pubky-fiat-verifier`, deployed
   in this same Railway project), which proxies BTC criteria verbatim to
   paykit-server and settles `USD` criteria through Stripe test mode. Rollback
   is setting this back to the paykit-server URL and redeploying.
