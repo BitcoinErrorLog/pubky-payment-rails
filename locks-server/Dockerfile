@@ -43,7 +43,7 @@ FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6
 ARG LOCKS_REPO=https://github.com/BitcoinErrorLog/locks.git
 ARG LOCKS_REV=53a042826ea9398b16664d7da1af2238962ccde1
 LABEL org.opencontainers.image.title="Lock Server (Railway rails)" \
-      org.opencontainers.image.source="https://github.com/BitcoinErrorLog/pubky-payment-rails" \
+      org.opencontainers.image.source="https://github.com/pubky/pubky-payment-rails" \
       io.pubky.locks.repository="$LOCKS_REPO" \
       io.pubky.locks.revision="$LOCKS_REV"
 
